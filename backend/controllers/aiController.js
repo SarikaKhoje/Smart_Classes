@@ -123,7 +123,7 @@ Generate a structured 7-day academic study plan in strict JSON format with this 
     if (!finalPlan) {
       finalPlan = {
         studentName: student.name,
-        class: student.class || '10-A',
+        class: student.class || '10',
         targetGoal: targetExam || 'Term Final Examination Preparation',
         weeklySchedule: [
           { day: 'Monday', subject: weakSubjects?.[0] || 'Mathematics', topic: 'Core Problem Solving & Formula Revision', duration: `${studyHoursDaily || 2.5} hours`, priority: 'High' },
@@ -146,7 +146,7 @@ Generate a structured 7-day academic study plan in strict JSON format with this 
     const savedPlan = await StudyPlan.create({
       studentId: student._id,
       studentName: student.name,
-      class: student.class || '10-A',
+      class: student.class || '10',
       targetGoal: finalPlan.targetGoal || targetExam || 'Board Exam Mastery',
       targetExam: targetExam || 'Term Exams',
       studyHoursDaily: studyHoursDaily || 2.5,
@@ -159,6 +159,7 @@ Generate a structured 7-day academic study plan in strict JSON format with this 
     return res.status(200).json({
       success: true,
       message: 'AI Study Plan generated and saved successfully!',
+      aiConfigured: Boolean(apiKey),
       plan: savedPlan
     });
 

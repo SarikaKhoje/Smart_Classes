@@ -11,20 +11,20 @@ export const getOnlineClasses = async (req, res, next) => {
     if (req.user.role === 'student') {
       query.class = req.user.class;
     } else if (req.user.role === 'parent') {
-      let childClasses = [];
-      const children = await User.find({
-        $or: [
-          { _id: { $in: req.user.children?.map(c => c.studentId) || [] } },
-          { parentEmail: req.user.email.toLowerCase() }
-        ]
-      }).select('class');
-      childClasses = children.map(c => c.class).filter(Boolean);
-      query.class = { $in: childClasses };
-    } else if (req.user.role === 'teacher') {
-      if (className) query.class = className;
-      else if (req.user.assignedClasses && req.user.assignedClasses.length > 0) {
-        query.class = { $in: req.user.assignedClasses };
+      const childIds = (req.user.children || []).map(child => child.studentId).filter(Boolean);
+      const children = await User.find({ _id: { $in: childIds }, role: 'student' }).select('class');
+      const childClasses = [...new Set(children.map(child => child.class).filter(Boolean))];
+      if (className && !childClasses.includes(className)) {
+        return res.status(403).json({ success: false, message: 'You are not authorized to view this class' });
       }
+      query.class = className || { $in: childClasses };
+    } else if (req.user.role === 'teacher') {
+      const assignedClasses = req.user.assignedClasses || [];
+      if (className && !assignedClasses.includes(className)) {
+        return res.status(403).json({ success: false, message: 'You are not assigned to this class' });
+      }
+      query.teacherId = req.user._id;
+      query.class = className || { $in: assignedClasses };
     } else if (className) {
       query.class = className;
     }
@@ -43,6 +43,9 @@ export const getOnlineClasses = async (req, res, next) => {
 export const createOnlineClass = async (req, res, next) => {
   try {
     const { title, subject, class: className, scheduledAt, duration, meetingUrl, platform, description } = req.body;
+    if (req.user.role === 'teacher' && !req.user.assignedClasses?.includes(className)) {
+      return res.status(403).json({ success: false, message: 'You are not assigned to this class' });
+    }
 
     if (!title || !subject || !className || !scheduledAt || !meetingUrl) {
       return res.status(400).json({
@@ -90,7 +93,19 @@ export const updateOnlineClass = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Not authorized to modify this online class' });
     }
 
-    Object.assign(onlineClass, req.body);
+    const { title, subject, class: className, scheduledAt, duration, meetingUrl, platform, description, status } = req.body;
+    if (className && req.user.role === 'teacher' && !req.user.assignedClasses?.includes(className)) {
+      return res.status(403).json({ success: false, message: 'You are not assigned to the target class' });
+    }
+    if (title !== undefined) onlineClass.title = title;
+    if (subject !== undefined) onlineClass.subject = subject;
+    if (className !== undefined) onlineClass.class = className;
+    if (scheduledAt !== undefined) onlineClass.scheduledAt = scheduledAt;
+    if (duration !== undefined) onlineClass.duration = duration;
+    if (meetingUrl !== undefined) onlineClass.meetingUrl = meetingUrl;
+    if (platform !== undefined) onlineClass.platform = platform;
+    if (description !== undefined) onlineClass.description = description;
+    if (status !== undefined) onlineClass.status = status;
     await onlineClass.save();
 
     res.status(200).json({ success: true, message: 'Online class updated', onlineClass });

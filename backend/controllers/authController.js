@@ -1,12 +1,17 @@
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
-import { hashPassword, comparePassword, generateOtp } from '../utils/passwordUtils.js';
+import { hashPassword, comparePassword, generateOtp, hashResetOtp } from '../utils/passwordUtils.js';
 import { generateUniqueId } from '../utils/generateId.js';
 import { sendOtpEmail } from '../utils/emailService.js';
+import { createTotpProvisioningUri, generateTotpSecret, verifyTotpCode } from '../utils/totp.js';
 
 // Helper to generate JWT Token
 const generateToken = (id, role) => {
-  return jwt.sign({ id, role }, process.env.JWT_SECRET || 'kashvi_super_secure_jwt_secret_key_2024_academic', {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    throw new Error('JWT_SECRET must be configured with at least 32 characters before issuing authentication tokens');
+  }
+  return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE || '7d'
   });
 };
@@ -126,22 +131,32 @@ export const register = async (req, res, next) => {
 export const forgotPassword = async (req, res, next) => {
   try {
     const { email } = req.body;
-    const user = await User.findOne({ email: email ? email.toLowerCase() : '' });
+    if (typeof email !== 'string' || email.length > 254) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required' });
+    }
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
 
     if (!user) {
-      return res.status(404).json({ success: false, message: 'No account found with this email' });
+      return res.status(200).json({ success: true, message: 'If an account exists, a reset code will be sent to its email address' });
     }
 
     const otp = generateOtp();
-    user.passwordResetToken = otp;
+    user.passwordResetToken = hashResetOtp(otp);
     user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
     await user.save({ validateBeforeSave: false });
 
-    await sendOtpEmail(user.email, otp);
+    try {
+      await sendOtpEmail(user.email, otp);
+    } catch (error) {
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save({ validateBeforeSave: false });
+      throw error;
+    }
 
     res.status(200).json({
       success: true,
-      message: 'OTP has been sent to your email address'
+      message: 'If an account exists, a reset code will be sent to its email address'
     });
   } catch (error) {
     next(error);
@@ -154,9 +169,12 @@ export const forgotPassword = async (req, res, next) => {
 export const verifyOtp = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
+    if (typeof email !== 'string' || typeof otp !== 'string' || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ success: false, message: 'A valid email and six-digit reset code are required' });
+    }
     const user = await User.findOne({
-      email: email ? email.toLowerCase() : '',
-      passwordResetToken: otp,
+      email: email.toLowerCase().trim(),
+      passwordResetToken: hashResetOtp(otp),
       passwordResetExpires: { $gt: Date.now() }
     });
 
@@ -176,9 +194,13 @@ export const verifyOtp = async (req, res, next) => {
 export const resetPassword = async (req, res, next) => {
   try {
     const { email, otp, newPassword } = req.body;
+    if (typeof email !== 'string' || typeof otp !== 'string' || !/^\d{6}$/.test(otp) ||
+        typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 128) {
+      return res.status(400).json({ success: false, message: 'Provide a valid email, six-digit code, and password of 8 to 128 characters' });
+    }
     const user = await User.findOne({
-      email: email ? email.toLowerCase() : '',
-      passwordResetToken: otp,
+      email: email.toLowerCase().trim(),
+      passwordResetToken: hashResetOtp(otp),
       passwordResetExpires: { $gt: Date.now() }
     });
 
@@ -204,28 +226,23 @@ export const resetPassword = async (req, res, next) => {
 export const verify2FA = async (req, res, next) => {
   try {
     const { userId, otp } = req.body;
-    if (!userId || !otp) {
-      return res.status(400).json({ success: false, message: 'User ID and OTP are required' });
+    if (!mongoose.isValidObjectId(userId) || typeof otp !== 'string' || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ success: false, message: 'User ID and six-digit authenticator code are required' });
     }
 
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    if (!user || !user.isActive || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: 'Invalid or unavailable authenticator challenge' });
     }
 
-    // Verify against user's stored 2FA secret or active passwordResetToken OTP
-    const isValidOtp = Boolean(
-      (user.twoFactorSecret && otp === user.twoFactorSecret) ||
-      (user.passwordResetToken && otp === user.passwordResetToken && user.passwordResetExpires > Date.now())
-    );
-
-    if (!isValidOtp) {
+    const verifiedStep = verifyTotpCode(user.twoFactorSecret, otp, {
+      afterStep: user.twoFactorLastVerifiedStep ?? -1
+    });
+    if (verifiedStep === null) {
       return res.status(400).json({ success: false, message: 'Invalid or expired 2FA code' });
     }
 
-    // Clear reset token if used
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
+    user.twoFactorLastVerifiedStep = verifiedStep;
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
 
@@ -252,14 +269,37 @@ export const verify2FA = async (req, res, next) => {
 export const enable2FA = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
-    user.twoFactorEnabled = true;
-    user.twoFactorSecret = 'KASHVI2FA' + Math.floor(1000 + Math.random() * 9000);
-    await user.save({ validateBeforeSave: false });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (req.body.otp !== undefined && (typeof req.body.otp !== 'string' || !/^\d{6}$/.test(req.body.otp))) {
+      return res.status(400).json({ success: false, message: 'Authenticator code must be six digits' });
+    }
+    if (req.body.otp !== undefined) {
+      const verifiedStep = user.twoFactorPendingSecret &&
+        user.twoFactorPendingExpires > Date.now()
+        ? verifyTotpCode(user.twoFactorPendingSecret, req.body.otp)
+        : null;
+      if (verifiedStep === null) {
+        return res.status(400).json({ success: false, message: 'A valid pending authenticator code is required to enable 2FA' });
+      }
+      user.twoFactorSecret = user.twoFactorPendingSecret;
+      user.twoFactorPendingSecret = undefined;
+      user.twoFactorPendingExpires = undefined;
+      user.twoFactorLastVerifiedStep = verifiedStep;
+      user.twoFactorEnabled = true;
+      await user.save({ validateBeforeSave: false });
+      return res.status(200).json({ success: true, message: 'Two-Factor Authentication enabled' });
+    }
 
+    const secret = generateTotpSecret();
+    user.twoFactorPendingSecret = secret;
+    user.twoFactorPendingExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
     res.status(200).json({
       success: true,
-      message: 'Two-Factor Authentication enabled',
-      secret: user.twoFactorSecret
+      message: 'Scan the URI with an authenticator app, then submit the current six-digit code to enable 2FA.',
+      secret,
+      otpauthUrl: createTotpProvisioningUri(secret, user.email),
+      expiresAt: user.twoFactorPendingExpires
     });
   } catch (error) {
     next(error);

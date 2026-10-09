@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const studyPlanSchema = new mongoose.Schema({
   studentId: {
@@ -8,7 +9,7 @@ const studyPlanSchema = new mongoose.Schema({
     index: true
   },
   studentName: { type: String, required: true },
-  class: { type: String, required: true },
+  class: { type: String, enum: ACADEMIC_CLASSES, required: true },
   targetGoal: { type: String, default: 'Term Academic Excellence' },
   targetExam: { type: String, default: 'Board / Annual Exam' },
   studyHoursDaily: { type: Number, default: 2.5 },

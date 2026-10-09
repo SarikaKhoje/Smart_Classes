@@ -139,7 +139,7 @@ The application is framed inside a master responsive shell (`Layout.jsx`):
 
 #### 1. Quick Attendance Marking Hub
 - **Control Bar**:
-  - Class selector dropdown (e.g., `Class 10-A`).
+  - Class selector dropdown (e.g., `Class 10`).
   - Interactive Date Picker (`YYYY-MM-DD`).
   - **"⚡ Mark All Present" Quick Action**: Sets all students in the batch to Present with one click.
   - **"💾 Submit Attendance" Action**: Persists batch attendance with instant confirmation toast.
@@ -212,7 +212,7 @@ The application is framed inside a master responsive shell (`Layout.jsx`):
 **Component**: `ParentDashboard.jsx`
 
 #### 1. Multi-Ward Switcher Bar
-- Horizontal ward switcher tabs with children's names and classes (e.g., `[ Aarav Sharma (10-A) | Diya Sharma (8-B) ]`).
+- Horizontal ward switcher tabs with children's names and classes (e.g., `[ Aarav Sharma (10) | Diya Sharma (7) ]`).
 - Switching tabs immediately re-fetches attendance, fees, and report cards with zero IDOR leaks.
 
 #### 2. Ward Attendance & Daily Presence Telemetry

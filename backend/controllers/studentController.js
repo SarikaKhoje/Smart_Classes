@@ -4,6 +4,7 @@ import Homework from '../models/Homework.js';
 import Test from '../models/Test.js';
 import Report from '../models/Report.js';
 import Announcement from '../models/Announcement.js';
+import { evaluateStudentAnswers, toStudentTest } from '../utils/studentTest.js';
 
 // @desc    Get student dashboard summary
 // @route   GET /api/student/dashboard
@@ -74,6 +75,18 @@ export const getStudentHomework = async (req, res, next) => {
 export const submitHomework = async (req, res, next) => {
   try {
     const { fileUrl } = req.body;
+    if (typeof fileUrl !== 'string' || fileUrl.length > 2048) {
+      return res.status(400).json({ success: false, message: 'Provide a valid HTTPS link to your submission' });
+    }
+    let submissionUrl;
+    try {
+      submissionUrl = new URL(fileUrl);
+    } catch {
+      return res.status(400).json({ success: false, message: 'Provide a valid HTTPS link to your submission' });
+    }
+    if (submissionUrl.protocol !== 'https:' || submissionUrl.username || submissionUrl.password) {
+      return res.status(400).json({ success: false, message: 'Submission links must use HTTPS and cannot contain credentials' });
+    }
     const homework = await Homework.findById(req.params.id);
 
     if (!homework) {
@@ -91,7 +104,7 @@ export const submitHomework = async (req, res, next) => {
 
     if (existingIndex > -1) {
       // Update existing submission (Controlled resubmission update)
-      homework.submissions[existingIndex].fileUrl = fileUrl || homework.submissions[existingIndex].fileUrl;
+      homework.submissions[existingIndex].fileUrl = submissionUrl.href;
       homework.submissions[existingIndex].submittedAt = new Date();
       homework.submissions[existingIndex].feedback = 'Resubmitted / Updated';
       await homework.save();
@@ -107,7 +120,7 @@ export const submitHomework = async (req, res, next) => {
     const newSubmission = {
       studentId: req.user._id,
       studentName: req.user.name,
-      fileUrl: fileUrl || 'https://sampledocs.kashvi.edu/submission.pdf',
+      fileUrl: submissionUrl.href,
       submittedAt: new Date()
     };
 
@@ -129,7 +142,8 @@ export const submitHomework = async (req, res, next) => {
 export const getStudentTests = async (req, res, next) => {
   try {
     const tests = await Test.find({ class: req.user.class, status: 'published' });
-    res.status(200).json({ success: true, count: tests.length, tests });
+    const safeTests = tests.map(test => toStudentTest(test, req.user._id));
+    res.status(200).json({ success: true, count: safeTests.length, tests: safeTests });
   } catch (error) {
     next(error);
   }
@@ -139,36 +153,35 @@ export const getStudentTests = async (req, res, next) => {
 // @route   POST /api/student/tests/:id/submit
 export const submitTestAttempt = async (req, res, next) => {
   try {
-    const { answers } = req.body; // e.g. { '0': 'A', '1': 'B' } or { '0': 1, '1': 0 }
+    if (req.user.role !== 'student') {
+      return res.status(403).json({ success: false, message: 'Only students can submit test attempts' });
+    }
     const test = await Test.findById(req.params.id);
 
     if (!test) {
       return res.status(404).json({ success: false, message: 'Test not found' });
     }
 
-    let score = 0;
-    let correctCount = 0;
-    let wrongCount = 0;
+    if (test.status !== 'published' || test.class !== req.user.class) {
+      return res.status(404).json({ success: false, message: 'Test is not available to this student' });
+    }
+
+    const alreadySubmitted = test.attempts.some(
+      attempt => attempt.studentId?.toString() === req.user._id.toString()
+    );
+    if (alreadySubmitted) {
+      return res.status(409).json({ success: false, message: 'You have already submitted this test' });
+    }
+
+    const evaluation = evaluateStudentAnswers(test.questions, req.body.answers);
+    if (evaluation.error) {
+      return res.status(400).json({ success: false, message: evaluation.error });
+    }
+    const score = evaluation.score;
     const totalQuestions = test.questions.length;
-
-    test.questions.forEach((q, idx) => {
-      const selected = answers ? answers[idx] : undefined;
-      if (selected !== undefined && selected !== null && selected.toString().trim().toLowerCase() === q.correctAnswer.toString().trim().toLowerCase()) {
-        score += (q.marks || 1);
-        correctCount++;
-      } else if (selected !== undefined && selected !== null) {
-        wrongCount++;
-      }
-    });
-
     const totalMarks = test.totalMarks || (totalQuestions * 1);
     const percentage = totalMarks > 0 ? Number(((score / totalMarks) * 100).toFixed(1)) : 0;
     const isPassed = score >= (test.passingMarks || Math.ceil(totalMarks * 0.4));
-
-    // Deduplicate / update attempt if already taken
-    const existingAttemptIndex = test.attempts.findIndex(
-      a => a.studentId && a.studentId.toString() === req.user._id.toString()
-    );
 
     const attemptData = {
       studentId: req.user._id,
@@ -178,13 +191,18 @@ export const submitTestAttempt = async (req, res, next) => {
       submittedAt: new Date()
     };
 
-    if (existingAttemptIndex > -1) {
-      test.attempts[existingAttemptIndex] = attemptData;
-    } else {
-      test.attempts.push(attemptData);
+    const update = await Test.updateOne(
+      {
+        _id: test._id,
+        status: 'published',
+        class: req.user.class,
+        'attempts.studentId': { $ne: req.user._id }
+      },
+      { $push: { attempts: attemptData } }
+    );
+    if (update.modifiedCount !== 1) {
+      return res.status(409).json({ success: false, message: 'This test attempt was already submitted or the test is no longer available' });
     }
-
-    await test.save();
 
     res.status(200).json({
       success: true,
@@ -193,8 +211,6 @@ export const submitTestAttempt = async (req, res, next) => {
         score,
         totalMarks,
         totalQuestions,
-        correctCount,
-        wrongCount,
         percentage,
         isPassed
       }
@@ -247,7 +263,7 @@ export const getLeaderboard = async (req, res, next) => {
       return {
         id: student.uniqueId || student._id,
         name: student.name,
-        class: student.class || '10-A',
+        class: student.class || '10',
         points: totalPoints,
         testsCompleted: testsAttempted,
         presentDays: presentCount

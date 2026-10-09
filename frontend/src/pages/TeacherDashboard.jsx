@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import {
   CalendarCheck,
@@ -14,24 +15,40 @@ import {
   Search,
   CheckCircle2,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  MessageSquareText,
+  UserCheck
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ACADEMIC_CLASSES } from '../constants/academicClasses';
+import { useLanguage } from '../context/LanguageContext';
 
 export const TeacherDashboard = () => {
+  const { user } = useAuth();
+  const { language, t } = useLanguage();
   const location = useLocation();
   const path = location.pathname;
+  const availableClasses = user?.role === 'teacher'
+    ? (user.assignedClasses || []).filter(grade => ACADEMIC_CLASSES.includes(grade))
+    : ACADEMIC_CLASSES;
+  const initialClass = availableClasses[0] || '';
 
   const [students, setStudents] = useState([]);
   const [homeworkList, setHomeworkList] = useState([]);
   const [onlineClasses, setOnlineClasses] = useState([]);
   const [studyMaterials, setStudyMaterials] = useState([]);
+  const [feedbackForms, setFeedbackForms] = useState([]);
+  const [tests, setTests] = useState([]);
+  const [checkIns, setCheckIns] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Quick Attendance State
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [selectedClass, setSelectedClass] = useState('10-A');
+  const [selectedClass, setSelectedClass] = useState(initialClass);
+  const classStudents = students.filter(student => student.class === selectedClass);
   const [attendanceRecords, setAttendanceRecords] = useState({});
+  const [selectedCheckInStudentId, setSelectedCheckInStudentId] = useState('');
+  const [checkInEventType, setCheckInEventType] = useState('arrival');
 
   // Homework modal
   const [showHwModal, setShowHwModal] = useState(false);
@@ -39,7 +56,7 @@ export const TeacherDashboard = () => {
     title: '',
     description: '',
     subject: 'Mathematics',
-    class: '10-A',
+    class: initialClass,
     dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   });
 
@@ -48,7 +65,7 @@ export const TeacherDashboard = () => {
   const [newClass, setNewClass] = useState({
     title: 'Trigonometry Deep Dive & Numerical Problem Solving',
     subject: 'Mathematics',
-    class: '10-A',
+    class: initialClass,
     scheduledAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 16),
     duration: 45,
     meetingUrl: 'https://meet.google.com/abc-defg-hij',
@@ -61,45 +78,123 @@ export const TeacherDashboard = () => {
     title: '',
     description: '',
     subject: 'Mathematics',
-    class: '10-A',
-    fileUrl: 'https://sampledocs.kashvi.edu/notes_algebra.pdf',
-    fileName: 'Quadratic_Equations_Formulas.pdf'
+    class: initialClass
+  });
+  const [noteFile, setNoteFile] = useState(null);
+
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [newTest, setNewTest] = useState({
+    title: '',
+    subject: 'Mathematics',
+    class: initialClass,
+    duration: 30,
+    totalMarks: 10,
+    passingMarks: 4,
+    status: 'published'
+  });
+  const [testQuestions, setTestQuestions] = useState([]);
+  const [questionDraft, setQuestionDraft] = useState({ question: '', options: '', correctAnswer: '', marks: 1 });
+  const [newFeedbackForm, setNewFeedbackForm] = useState({
+    title: '',
+    subject: 'Mathematics',
+    class: initialClass,
+    lectureDate: new Date().toISOString().split('T')[0],
+    question: 'How helpful was this lesson?'
   });
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [stuRes, hwRes, classRes, noteRes] = await Promise.all([
+      const [stuRes, hwRes, classRes, noteRes, feedbackRes, testsRes] = await Promise.all([
         api.get('/teacher/my-students'),
         api.get('/teacher/homework'),
         api.get('/online-classes'),
-        api.get('/notes')
+        api.get('/notes'),
+        api.get('/feedback/teacher'),
+        api.get('/teacher/tests')
       ]);
       const stuList = stuRes.data?.students || [];
       setStudents(stuList);
       setHomeworkList(hwRes.data?.homework || []);
       setOnlineClasses(classRes.data?.onlineClasses || []);
       setStudyMaterials(noteRes.data?.materials || []);
+      setFeedbackForms(feedbackRes.data?.forms || []);
+      setTests(testsRes.data?.tests || []);
 
-      // Default attendance records
-      const initialAttendance = {};
-      stuList.forEach((s) => {
-        initialAttendance[s._id] = 'present';
-      });
-      setAttendanceRecords(initialAttendance);
     } catch (err) {
-      toast.error('Failed to load teacher workspace');
+      toast.error(t('Failed to load teacher workspace'));
     }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [t]);
+
+  useEffect(() => {
+    if (!selectedClass || !path.includes('/attendance')) return undefined;
+    let active = true;
+    const loadAttendanceForSelection = async () => {
+      const initialAttendance = {};
+      classStudents.forEach(student => {
+        initialAttendance[student._id] = 'present';
+      });
+      setAttendanceRecords(initialAttendance);
+      try {
+        const response = await api.get('/teacher/attendance', {
+          params: { class: selectedClass, date: attendanceDate }
+        });
+        if (!active) return;
+        const currentRecords = { ...initialAttendance };
+        (response.data?.attendance || []).forEach(record => {
+          if (Object.prototype.hasOwnProperty.call(currentRecords, record.studentId)) {
+            currentRecords[record.studentId] = record.status;
+          }
+        });
+        setAttendanceRecords(currentRecords);
+      } catch (err) {
+        if (active) toast.error(err.response?.data?.message || t('Could not load attendance for this class and date'));
+      }
+    };
+    loadAttendanceForSelection();
+    return () => { active = false; };
+  }, [selectedClass, attendanceDate, students, path, t]);
+
+  const fetchCheckIns = async () => {
+    try {
+      const response = await api.get('/check-ins', {
+        params: { class: selectedClass, date: attendanceDate }
+      });
+      setCheckIns(response.data?.checkIns || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load arrival/departure records');
+    }
+  };
+
+  useEffect(() => {
+    if (path.includes('/check-ins')) fetchCheckIns();
+  }, [path, selectedClass, attendanceDate]);
+
+  const handleRecordCheckIn = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await api.post('/check-ins', {
+        studentId: selectedCheckInStudentId,
+        eventType: checkInEventType,
+        date: attendanceDate
+      });
+      toast.success(response.data?.message || 'Check-in event recorded');
+      setSelectedCheckInStudentId('');
+      fetchCheckIns();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to record student event');
+    }
+  };
 
   const handleMarkAllPresent = () => {
     const updated = {};
-    students.forEach((s) => {
+    classStudents.forEach((s) => {
       updated[s._id] = 'present';
     });
     setAttendanceRecords(updated);
@@ -114,8 +209,16 @@ export const TeacherDashboard = () => {
   };
 
   const handleSubmitAttendance = async () => {
+    if (!selectedClass) {
+      toast.error(t('Select a class before taking attendance'));
+      return;
+    }
+    if (!classStudents.length) {
+      toast.error(t('No linked students are available in this class'));
+      return;
+    }
     try {
-      const records = students.map((s) => ({
+      const records = classStudents.map((s) => ({
         studentId: s._id,
         studentName: s.name,
         status: attendanceRecords[s._id] || 'present'
@@ -129,10 +232,10 @@ export const TeacherDashboard = () => {
       });
 
       if (res.data?.success) {
-        toast.success(`Attendance marked successfully for ${records.length} students!`);
+        toast.success(t('Attendance marked successfully for {{count}} students!', { count: records.length }));
       }
     } catch (err) {
-      toast.error('Failed to submit attendance');
+      toast.error(t(err.response?.data?.message || 'Failed to submit attendance'));
     }
   };
 
@@ -147,7 +250,7 @@ export const TeacherDashboard = () => {
           title: '',
           description: '',
           subject: 'Mathematics',
-          class: '10-A',
+          class: initialClass,
           dueDate: new Date().toISOString().split('T')[0]
         });
         fetchData();
@@ -173,8 +276,14 @@ export const TeacherDashboard = () => {
 
   const handleUploadNote = async (e) => {
     e.preventDefault();
+    if (!noteFile) return toast.error('Choose a PDF, PNG, JPEG, or text file to upload');
     try {
-      const res = await api.post('/notes', newNote);
+      const formData = new FormData();
+      Object.entries(newNote).forEach(([key, value]) => formData.append(key, value));
+      formData.append('file', noteFile);
+      const res = await api.post('/notes', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
       if (res.data?.success) {
         toast.success('Study material published successfully!');
         setShowNoteModal(false);
@@ -182,14 +291,89 @@ export const TeacherDashboard = () => {
           title: '',
           description: '',
           subject: 'Mathematics',
-          class: '10-A',
-          fileUrl: 'https://sampledocs.kashvi.edu/notes_algebra.pdf',
-          fileName: 'Revision_Notes.pdf'
+          class: initialClass
         });
+        setNoteFile(null);
         fetchData();
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to upload study note');
+    }
+  };
+
+  const downloadMaterial = async (material) => {
+    if (!material.fileUrl?.startsWith('/api/notes/')) {
+      window.open(material.fileUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    try {
+      const response = await api.get(material.fileUrl.slice(4), { responseType: 'blob' });
+      const objectUrl = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = material.fileName || 'study-material';
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not download this material');
+    }
+  };
+
+  const handleCreateFeedbackForm = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api.post('/feedback/teacher', newFeedbackForm);
+      if (res.data?.success) {
+        toast.success('Lecture feedback form created!');
+        setShowFeedbackModal(false);
+        setNewFeedbackForm({
+          title: '',
+          subject: 'Mathematics',
+          class: initialClass,
+          lectureDate: new Date().toISOString().split('T')[0],
+          question: 'How helpful was this lesson?'
+        });
+        fetchData();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to create feedback form');
+    }
+  };
+
+  const handleAddTestQuestion = () => {
+    const options = questionDraft.options.split(/\r?\n/).map(option => option.trim()).filter(Boolean);
+    if (!questionDraft.question.trim() || options.length < 2 || !options.includes(questionDraft.correctAnswer.trim())) {
+      return toast.error('Add a question, at least two options (one per line), and choose a correct option exactly');
+    }
+    setTestQuestions(current => [...current, {
+      question: questionDraft.question.trim(),
+      type: 'mcq',
+      options,
+      correctAnswer: questionDraft.correctAnswer.trim(),
+      marks: Number(questionDraft.marks)
+    }]);
+    setQuestionDraft({ question: '', options: '', correctAnswer: '', marks: 1 });
+  };
+
+  const handleCreateTest = async (event) => {
+    event.preventDefault();
+    if (!testQuestions.length) return toast.error('Add at least one question before publishing');
+    const maxMarks = testQuestions.reduce((total, question) => total + question.marks, 0);
+    try {
+      const response = await api.post('/teacher/tests', {
+        ...newTest,
+        totalMarks: maxMarks,
+        questions: testQuestions
+      });
+      if (response.data?.success) {
+        toast.success('Assessment published');
+        setShowTestModal(false);
+        setTestQuestions([]);
+        setNewTest({ title: '', subject: 'Mathematics', class: initialClass, duration: 30, totalMarks: 10, passingMarks: 4, status: 'published' });
+        fetchData();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not publish assessment');
     }
   };
 
@@ -201,16 +385,22 @@ export const TeacherDashboard = () => {
           <div>
             <h2 className="text-2xl font-black text-white">
               {path.includes('/attendance')
-                ? 'Daily Attendance Register'
+                ? t('Daily Attendance Register')
                 : path.includes('/homework')
-                ? 'Homework Hub & Submissions'
+                ? t('Homework Hub & Submissions')
                 : path.includes('/classes')
-                ? 'Live Virtual Classrooms'
+                ? t('Live Virtual Classrooms')
                 : path.includes('/notes')
-                ? 'Curriculum Study Materials'
-                : 'Faculty Dashboard'}
+                ? t('Curriculum Study Materials')
+                : path.includes('/feedback')
+                ? t('Lecture Feedback & Responses')
+                : path.includes('/tests')
+                ? t('Tests & Assessments')
+                : path.includes('/check-ins')
+                ? t('Student Arrival & Departure Register')
+                : t('Faculty Dashboard')}
             </h2>
-            <p className="text-xs text-slate-400">Classroom Management & Instruction Console</p>
+            <p className="text-xs text-slate-400">{t('Classroom Management & Instruction Console')}</p>
           </div>
 
           <div className="flex gap-2">
@@ -220,7 +410,7 @@ export const TeacherDashboard = () => {
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
               >
                 <Plus className="h-4 w-4" />
-                <span>Assign Homework</span>
+                <span>{t('Assign Homework')}</span>
               </button>
             )}
             {path.includes('/classes') && (
@@ -229,7 +419,7 @@ export const TeacherDashboard = () => {
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
               >
                 <Video className="h-4 w-4" />
-                <span>Schedule Live Class</span>
+                <span>{t('Schedule Live Class')}</span>
               </button>
             )}
             {path.includes('/notes') && (
@@ -238,8 +428,111 @@ export const TeacherDashboard = () => {
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
               >
                 <Plus className="h-4 w-4" />
-                <span>Upload Material</span>
+                <span>{t('Upload Material')}</span>
               </button>
+            )}
+            {path.includes('/feedback') && (
+              <button
+                onClick={() => setShowFeedbackModal(true)}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
+              >
+                <Plus className="h-4 w-4" />
+                <span>{t('Create Feedback Form')}</span>
+              </button>
+            )}
+            {path.includes('/tests') && (
+              <button
+                onClick={() => setShowTestModal(true)}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500"
+              >
+                <Plus className="h-4 w-4" />
+                <span>{t('Create Assessment')}</span>
+              </button>
+            )}
+
+            {path.includes('/check-ins') && (
+              <div className="space-y-5">
+                <form onSubmit={handleRecordCheckIn} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-5 md:grid-cols-4">
+                  <label className="text-[11px] font-semibold text-slate-300">
+                    {t('Class')}
+                    <select
+                      value={selectedClass}
+                      onChange={(e) => setSelectedClass(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+                    >
+                      {[...new Set(students.map((student) => student.class).filter(Boolean))].map((className) => (
+                        <option key={className} value={className}>{className}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] font-semibold text-slate-300">
+                    {t('Student')}
+                    <select
+                      required
+                      value={selectedCheckInStudentId}
+                      onChange={(e) => setSelectedCheckInStudentId(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+                    >
+                      <option value="">{t('Select a student')}</option>
+                      {students.filter((student) => student.class === selectedClass).map((student) => (
+                        <option key={student._id} value={student._id}>{student.name} · {student.rollNumber}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] font-semibold text-slate-300">
+                    {t('Event')}
+                    <select
+                      value={checkInEventType}
+                      onChange={(e) => setCheckInEventType(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+                    >
+                      <option value="arrival">{t('Arrival')}</option>
+                      <option value="departure">{t('Departure')}</option>
+                    </select>
+                  </label>
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500"
+                    >
+                      {t('Record event')}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 md:col-span-4">
+                    {t('Records are created by institute staff. No GPS or continuous location tracking is used; duplicate arrival or departure events for the same date are rejected.')}
+                  </p>
+                </form>
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                  <div className="mb-4 flex items-center gap-2">
+                    <UserCheck className="h-4 w-4 text-indigo-400" />
+                    <h3 className="text-sm font-bold text-white">{t('Recorded Events')} · {attendanceDate}</h3>
+                  </div>
+                  {checkIns.length ? (
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400">
+                          <th className="pb-3 font-semibold">{t('Student')}</th>
+                          <th className="pb-3 font-semibold">{t('Event')}</th>
+                          <th className="pb-3 font-semibold">{t('Time recorded')}</th>
+                          <th className="pb-3 font-semibold">{t('Recorded by')}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {checkIns.map((entry) => (
+                          <tr key={entry._id}>
+                            <td className="py-3 font-semibold text-white">{entry.studentName}</td>
+                            <td className="py-3 capitalize text-slate-300">{entry.eventType}</td>
+                            <td className="py-3 text-slate-300">{new Date(entry.recordedAt).toLocaleTimeString(language === 'mr' ? 'mr-IN' : language === 'hi' ? 'hi-IN' : 'en-IN')}</td>
+                            <td className="py-3 text-slate-400">{entry.recordingMethod.replace('-', ' ')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="text-xs text-slate-500">{t('No arrival or departure events recorded for this date and class.')}</p>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -250,29 +543,31 @@ export const TeacherDashboard = () => {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Assigned Students</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Assigned Students')}</span>
                   <Users className="h-5 w-5 text-indigo-400" />
                 </div>
-                <h3 className="mt-3 text-2xl font-black text-white">{students.length || 24}</h3>
-                <p className="mt-1 text-[11px] text-indigo-400">Classes: 10-A, 9-B, 8-A</p>
+                <h3 className="mt-3 text-2xl font-black text-white">{students.length}</h3>
+                <p className="mt-1 text-[11px] text-indigo-400">
+                  {t('Grades')}: {availableClasses.length ? availableClasses.join(', ') : t('None assigned')}
+                </p>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Active Homework</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Active Homework')}</span>
                   <FileText className="h-5 w-5 text-indigo-400" />
                 </div>
                 <h3 className="mt-3 text-2xl font-black text-white">{homeworkList.length}</h3>
-                <p className="mt-1 text-[11px] text-emerald-400">Open for Submissions</p>
+                <p className="mt-1 text-[11px] text-emerald-400">{t('Open for Submissions')}</p>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Live Sessions</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Live Sessions')}</span>
                   <Video className="h-5 w-5 text-indigo-400" />
                 </div>
                 <h3 className="mt-3 text-2xl font-black text-white">{onlineClasses.length}</h3>
-                <p className="mt-1 text-[11px] text-indigo-400">Scheduled Sessions</p>
+                <p className="mt-1 text-[11px] text-indigo-400">{t('Scheduled Sessions')}</p>
               </div>
             </div>
 
@@ -326,19 +621,21 @@ export const TeacherDashboard = () => {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-4">
               <div className="flex items-center gap-3">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-400">Class Batch</label>
+                  <label className="block text-[11px] font-semibold text-slate-400">{t('Class Batch')}</label>
                   <select
+                    aria-label="Attendance class"
+                    disabled={availableClasses.length === 0}
                     value={selectedClass}
                     onChange={(e) => setSelectedClass(e.target.value)}
                     className="mt-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
                   >
-                    {['10-A', '10-B', '9-A', '9-B', '8-A'].map((c) => (
+                    {availableClasses.map((c) => (
                       <option key={c} value={c}>Class {c}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-400">Date</label>
+                  <label className="block text-[11px] font-semibold text-slate-400">{t('Date')}</label>
                   <input
                     type="date"
                     value={attendanceDate}
@@ -354,14 +651,14 @@ export const TeacherDashboard = () => {
                   onClick={handleMarkAllPresent}
                   className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20"
                 >
-                  Mark All Present
+                  {t('Mark All Present')}
                 </button>
                 <button
                   type="button"
                   onClick={handleSubmitAttendance}
                   className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
                 >
-                  Save & Submit Register
+                  {t('Save & Submit Register')}
                 </button>
               </div>
             </div>
@@ -371,14 +668,14 @@ export const TeacherDashboard = () => {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="pb-3 font-semibold">Student Name</th>
-                    <th className="pb-3 font-semibold">Roll No. / ID</th>
-                    <th className="pb-3 font-semibold">Class</th>
-                    <th className="pb-3 text-right font-semibold">Status Selection</th>
+                    <th className="pb-3 font-semibold">{t('Student Name')}</th>
+                    <th className="pb-3 font-semibold">{t('Roll No. / ID')}</th>
+                    <th className="pb-3 font-semibold">{t('Class')}</th>
+                    <th className="pb-3 text-right font-semibold">{t('Status Selection')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {students.map((s) => {
+                  {classStudents.map((s) => {
                     const status = attendanceRecords[s._id] || 'present';
                     return (
                       <tr key={s._id} className="hover:bg-slate-800/30">
@@ -387,7 +684,7 @@ export const TeacherDashboard = () => {
                         <td className="py-3 text-slate-300">{s.class || selectedClass}</td>
                         <td className="py-3 text-right">
                           <div className="inline-flex gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800">
-                            {['present', 'absent', 'late'].map((st) => (
+                            {['present', 'absent', 'leave', 'holiday'].map((st) => (
                               <button
                                 key={st}
                                 onClick={() => handleAttendanceStatusChange(s._id, st)}
@@ -401,7 +698,7 @@ export const TeacherDashboard = () => {
                                     : 'text-slate-400 hover:text-slate-200'
                                 }`}
                               >
-                                {st}
+                                {t(st)}
                               </button>
                             ))}
                           </div>
@@ -411,6 +708,13 @@ export const TeacherDashboard = () => {
                   })}
                 </tbody>
               </table>
+              {classStudents.length === 0 && (
+                <p className="py-8 text-center text-sm text-slate-400">
+                  {selectedClass
+                    ? t('No students linked to this teacher in Class {{class}}.', { class: selectedClass })
+                    : t('No classes are assigned to this teacher.')}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -494,17 +798,136 @@ export const TeacherDashboard = () => {
                 <p className="mt-1 text-xs text-slate-400 line-clamp-2">{n.description}</p>
                 <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-3 text-xs">
                   <span className="text-slate-500">By {n.uploaderName}</span>
-                  <a
-                    href={n.fileUrl || '#'}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => downloadMaterial(n)}
                     className="font-bold text-indigo-400 hover:text-indigo-300"
                   >
                     Open Document →
-                  </a>
+                  </button>
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {path.includes('/feedback') && (
+          <div className="space-y-4">
+            {feedbackForms.length === 0 ? (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center">
+                <MessageSquareText className="mx-auto mb-3 h-8 w-8 text-slate-600" />
+                <p className="text-sm font-semibold text-white">No feedback forms yet</p>
+                <p className="mt-1 text-xs text-slate-400">Create one after a lecture to collect student feedback.</p>
+              </div>
+            ) : feedbackForms.map((form) => (
+              <section key={form._id} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">{form.title}</h3>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Class {form.class} · {form.subject} · {new Date(form.lectureDate).toLocaleDateString()}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-300">{form.question}</p>
+                  </div>
+                  <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-bold text-indigo-300">
+                    {form.responses?.length || 0} responses
+                  </span>
+                </div>
+                <div className="mt-4 space-y-2 border-t border-slate-800 pt-3">
+                  {(form.responses || []).length === 0 ? (
+                    <p className="text-xs text-slate-500">No students have responded yet.</p>
+                  ) : form.responses.map((response, index) => (
+                    <div key={`${response.studentId}-${index}`} className="rounded-xl bg-slate-950 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-white">{response.studentName}</p>
+                        <p className="text-xs font-bold text-amber-300">{response.rating}/5</p>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-slate-400">
+                        {response.comment || 'No additional comment'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+
+        {showFeedbackModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+              <h3 className="text-lg font-bold text-white">Create Lecture Feedback</h3>
+              <p className="mt-0.5 text-xs text-slate-400">Students in the selected class can rate this lesson and comment.</p>
+              <form onSubmit={handleCreateFeedbackForm} className="mt-4 space-y-3">
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  Lecture title
+                  <input
+                    required
+                    maxLength={120}
+                    value={newFeedbackForm.title}
+                    onChange={(e) => setNewFeedbackForm({ ...newFeedbackForm, title: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    placeholder="e.g. Introduction to Trigonometry"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-[11px] font-semibold text-slate-300">
+                    Class
+                    <select
+                      required
+                      value={newFeedbackForm.class}
+                      onChange={(e) => setNewFeedbackForm({ ...newFeedbackForm, class: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    >
+                      {availableClasses.map(grade => <option key={grade} value={grade}>Class {grade}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[11px] font-semibold text-slate-300">
+                    Subject
+                    <input
+                      required
+                      value={newFeedbackForm.subject}
+                      onChange={(e) => setNewFeedbackForm({ ...newFeedbackForm, subject: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    />
+                  </label>
+                </div>
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  Lecture date
+                  <input
+                    type="date"
+                    required
+                    value={newFeedbackForm.lectureDate}
+                    onChange={(e) => setNewFeedbackForm({ ...newFeedbackForm, lectureDate: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  Feedback prompt
+                  <input
+                    maxLength={300}
+                    value={newFeedbackForm.question}
+                    onChange={(e) => setNewFeedbackForm({ ...newFeedbackForm, question: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  />
+                </label>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowFeedbackModal(false)}
+                    className="flex-1 rounded-xl border border-slate-800 bg-slate-800/60 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white hover:bg-indigo-500"
+                  >
+                    Create Form
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
 
@@ -536,7 +959,7 @@ export const TeacherDashboard = () => {
                       onChange={(e) => setNewHw({ ...newHw, class: e.target.value })}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                     >
-                      {['10-A', '10-B', '9-A', '9-B', '8-A'].map(c => <option key={c} value={c}>{c}</option>)}
+                      {availableClasses.map(grade => <option key={grade} value={grade}>{grade}</option>)}
                     </select>
                   </div>
                   <div>
@@ -610,7 +1033,7 @@ export const TeacherDashboard = () => {
                       onChange={(e) => setNewClass({ ...newClass, class: e.target.value })}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                     >
-                      {['10-A', '10-B', '9-A', '9-B', '8-A'].map(c => <option key={c} value={c}>{c}</option>)}
+                      {availableClasses.map(grade => <option key={grade} value={grade}>{grade}</option>)}
                     </select>
                   </div>
                   <div>
@@ -656,6 +1079,36 @@ export const TeacherDashboard = () => {
           </div>
         )}
 
+        {path.includes('/tests') && (
+          <div className="space-y-3">
+            {tests.length === 0 ? (
+              <p className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center text-sm text-slate-400">No assessments have been created for your classes.</p>
+            ) : tests.map(test => (
+              <article key={test._id} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">{test.title}</h3>
+                    <p className="mt-1 text-xs text-slate-400">Class {test.class} · {test.subject} · {test.questions.length} questions · {test.totalMarks} marks</p>
+                  </div>
+                  <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-semibold capitalize text-indigo-300">{test.status}</span>
+                </div>
+                {test.attempts?.length > 0 && (
+                  <div className="mt-4 border-t border-slate-800 pt-3">
+                    <h4 className="text-xs font-semibold text-slate-300">Submitted results</h4>
+                    <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {test.attempts.map(attempt => (
+                        <li key={attempt.studentId} className="rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-300">
+                          {attempt.studentName}: {attempt.score} marks ({attempt.percentage}%)
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+
         {/* MODAL: UPLOAD STUDY NOTE */}
         {showNoteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
@@ -684,7 +1137,7 @@ export const TeacherDashboard = () => {
                       onChange={(e) => setNewNote({ ...newNote, class: e.target.value })}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                     >
-                      {['10-A', '10-B', '9-A', '9-B', '8-A'].map(c => <option key={c} value={c}>{c}</option>)}
+                      {availableClasses.map(grade => <option key={grade} value={grade}>{grade}</option>)}
                     </select>
                   </div>
                   <div>
@@ -710,6 +1163,17 @@ export const TeacherDashboard = () => {
                   />
                 </div>
 
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  File (PDF, PNG, JPEG, or TXT · up to 10 MB)
+                  <input
+                    type="file"
+                    required
+                    accept=".pdf,.png,.jpg,.jpeg,.txt,application/pdf,image/png,image/jpeg,text/plain"
+                    onChange={event => setNoteFile(event.target.files?.[0] || null)}
+                    className="mt-1 block w-full text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                  />
+                </label>
+
                 <div className="mt-5 flex gap-2 pt-2">
                   <button
                     type="button"
@@ -724,6 +1188,55 @@ export const TeacherDashboard = () => {
                   >
                     Upload & Publish
                   </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {showTestModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm">
+            <div className="my-auto w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+              <h3 className="text-lg font-bold text-white">Create class assessment</h3>
+              <form onSubmit={handleCreateTest} className="mt-4 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-slate-300">Title
+                    <input required maxLength={120} value={newTest.title} onChange={event => setNewTest({ ...newTest, title: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-white" />
+                  </label>
+                  <label className="text-xs font-semibold text-slate-300">Subject
+                    <input required maxLength={80} value={newTest.subject} onChange={event => setNewTest({ ...newTest, subject: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-white" />
+                  </label>
+                  <label className="text-xs font-semibold text-slate-300">Class
+                    <select required value={newTest.class} onChange={event => setNewTest({ ...newTest, class: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-white">
+                      {availableClasses.map(grade => <option key={grade} value={grade}>{grade}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-slate-300">Duration (minutes)
+                    <input required type="number" min="1" max="300" value={newTest.duration} onChange={event => setNewTest({ ...newTest, duration: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-white" />
+                  </label>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  <h4 className="text-sm font-semibold text-white">Add multiple-choice question</h4>
+                  <label className="mt-3 block text-xs text-slate-300">Question
+                    <input value={questionDraft.question} onChange={event => setQuestionDraft({ ...questionDraft, question: event.target.value })} maxLength={1000} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm text-white" />
+                  </label>
+                  <label className="mt-3 block text-xs text-slate-300">Options (one per line)
+                    <textarea rows={3} value={questionDraft.options} onChange={event => setQuestionDraft({ ...questionDraft, options: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm text-white" />
+                  </label>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <label className="text-xs text-slate-300">Correct option (must match one option)
+                      <input value={questionDraft.correctAnswer} onChange={event => setQuestionDraft({ ...questionDraft, correctAnswer: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm text-white" />
+                    </label>
+                    <label className="text-xs text-slate-300">Marks
+                      <input type="number" min="1" max="100" value={questionDraft.marks} onChange={event => setQuestionDraft({ ...questionDraft, marks: Number(event.target.value) })} className="mt-1 w-24 rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm text-white" />
+                    </label>
+                  </div>
+                  <button type="button" onClick={handleAddTestQuestion} className="mt-3 rounded-lg border border-indigo-500/40 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/10">Add question ({testQuestions.length})</button>
+                  {testQuestions.length > 0 && <p className="mt-2 text-xs text-slate-400">{testQuestions.length} question(s) · {testQuestions.reduce((sum, question) => sum + question.marks, 0)} marks total</p>}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowTestModal(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button>
+                  <button type="submit" disabled={!testQuestions.length} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Publish assessment</button>
                 </div>
               </form>
             </div>

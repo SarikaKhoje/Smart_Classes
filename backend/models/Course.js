@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const courseSchema = new mongoose.Schema({
   name: {
@@ -11,6 +12,7 @@ const courseSchema = new mongoose.Schema({
   },
   class: {
     type: String,
+    enum: ACADEMIC_CLASSES,
     required: true
   },
   teacherId: {

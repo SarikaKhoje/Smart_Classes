@@ -20,12 +20,12 @@ const authState = {
   pendingAdminAuth: null,
   userDirectory: [
     { id: 'ADMIN-2024-0001', name: 'Dr. Rajesh Sharma', email: 'admin@kashvi.com', role: 'admin', roleTitle: 'Super Admin', subject: 'Administration', classAssigned: 'All Classes', status: 'Active', avatar: 'AD' },
-    { id: 'TCH-2024-0001', name: 'Mr. Vikram Verma', email: 'teacher@kashvi.com', role: 'teacher', roleTitle: 'Senior Math Faculty', subject: 'Mathematics', classAssigned: '10-A, 9-B', status: 'Active', avatar: 'VV' },
-    { id: 'TCH-2024-0002', name: 'Ms. Sunita Rao', email: 'gupta@kashvi.com', role: 'teacher', roleTitle: 'Physics Specialist', subject: 'Physics', classAssigned: '9-B', status: 'Active', avatar: 'SR' },
+    { id: 'TCH-2024-0001', name: 'Mr. Vikram Verma', email: 'teacher@kashvi.com', role: 'teacher', roleTitle: 'Senior Math Faculty', subject: 'Mathematics', classAssigned: '10, 8', status: 'Active', avatar: 'VV' },
+    { id: 'TCH-2024-0002', name: 'Ms. Sunita Rao', email: 'gupta@kashvi.com', role: 'teacher', roleTitle: 'Physics Specialist', subject: 'Physics', classAssigned: '8', status: 'Active', avatar: 'SR' },
     { id: 'TCH-2024-0003', name: 'Dr. Ramesh Rao', email: 'verma@kashvi.com', role: 'teacher', roleTitle: 'Chemistry Lead', subject: 'Chemistry', classAssigned: '8-C', status: 'Inactive', avatar: 'RR' },
-    { id: 'STU-2024-0001', name: 'Aarav Sharma', email: 'student@kashvi.com', role: 'student', roleTitle: 'Student 10-A', subject: 'Science Stream', classAssigned: '10-A (Roll 12)', status: 'Active', parentEmail: 'parent@gmail.com', avatar: 'AS' },
-    { id: 'STU-2024-0002', name: 'Rhea Kulkarni', email: 'stu2@kashvi.com', role: 'student', roleTitle: 'Student 10-A', subject: 'Science Stream', classAssigned: '10-A (Roll 08)', status: 'Active', parentEmail: 'parent2@gmail.com', avatar: 'RK' },
-    { id: 'STU-2024-0003', name: 'Siddharth Patel', email: 'stu3@kashvi.com', role: 'student', roleTitle: 'Student 10-B', subject: 'Commerce', classAssigned: '10-B (Roll 15)', status: 'Inactive', parentEmail: 'parent3@gmail.com', avatar: 'SP' },
+    { id: 'STU-2024-0001', name: 'Aarav Sharma', email: 'student@kashvi.com', role: 'student', roleTitle: 'Student 10', subject: 'Science Stream', classAssigned: '10 (Roll 12)', status: 'Active', parentEmail: 'parent@gmail.com', avatar: 'AS' },
+    { id: 'STU-2024-0002', name: 'Rhea Kulkarni', email: 'stu2@kashvi.com', role: 'student', roleTitle: 'Student 10', subject: 'Science Stream', classAssigned: '10 (Roll 08)', status: 'Active', parentEmail: 'parent2@gmail.com', avatar: 'RK' },
+    { id: 'STU-2024-0003', name: 'Siddharth Patel', email: 'stu3@kashvi.com', role: 'student', roleTitle: 'Student 9', subject: 'Commerce', classAssigned: '9 (Roll 15)', status: 'Inactive', parentEmail: 'parent3@gmail.com', avatar: 'SP' },
     { id: 'PRN-2024-0001', name: 'Mr. Sharma', email: 'parent@gmail.com', role: 'parent', roleTitle: 'Guardian', subject: 'Parent Account', classAssigned: 'Aarav & Ananya', status: 'Active', avatar: 'PS' },
     { id: 'PRN-2024-0002', name: 'Dr. Kulkarni', email: 'parent2@gmail.com', role: 'parent', roleTitle: 'Guardian', subject: 'Parent Account', classAssigned: 'Rhea Kulkarni', status: 'Active', avatar: 'PK' }
   ],
@@ -685,10 +685,10 @@ function handleParentChildChange(childKey) {
   } else {
     avatar.textContent = 'AS';
     name.textContent = 'Aarav Sharma';
-    cls.textContent = 'Class 10-A • Roll No: 12 • Session 2024-25';
+    cls.textContent = 'Class 10 • Roll No: 12 • Session 2024-25';
     attendance.textContent = '87% Present';
     bar.style.width = '87%';
-    showToast('Switched to Aarav Sharma (10-A)', 'info');
+    showToast('Switched to Aarav Sharma (10)', 'info');
   }
 }
 

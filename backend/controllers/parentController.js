@@ -3,29 +3,18 @@ import Attendance from '../models/Attendance.js';
 import Homework from '../models/Homework.js';
 import Fee from '../models/Fee.js';
 import Report from '../models/Report.js';
+import Test from '../models/Test.js';
+import Timetable from '../models/Timetable.js';
+import Announcement from '../models/Announcement.js';
 import { verifyParentChildAccess } from '../utils/parentAuth.js';
 
 // @desc    Get parent's linked children
 // @route   GET /api/parent/children
 export const getChildren = async (req, res, next) => {
   try {
-    const parent = await User.findById(req.user._id);
-    let children = [];
-
-    if (parent.children && parent.children.length > 0) {
-      const childIds = parent.children.map(c => c.studentId).filter(Boolean);
-      children = await User.find({ _id: { $in: childIds }, role: 'student' }).select('-password');
-    }
-
-    // If no direct link in parent doc, search by parentEmail
-    if (children.length === 0) {
-      children = await User.find({
-        role: 'student',
-        parentEmail: req.user.email.toLowerCase()
-      }).select('-password');
-    }
-
-    // Return empty array if no children linked (Never return random fallback students)
+    const childIds = (req.user.children || []).map(child => child.studentId).filter(Boolean);
+    const children = await User.find({ _id: { $in: childIds }, role: 'student' })
+      .select('name uniqueId class rollNumber profilePicture');
     res.status(200).json({ success: true, count: children.length, children });
   } catch (error) {
     next(error);
@@ -73,55 +62,9 @@ export const getChildFees = async (req, res, next) => {
       });
     }
 
-    const student = await User.findById(studentId);
-    const fees = await Fee.find({
-      $or: [
-        { studentId: studentId },
-        { studentName: student ? student.name : '' }
-      ]
-    }).sort({ dueDate: -1 });
+    const fees = await Fee.find({ studentId }).sort({ dueDate: -1 });
 
     res.status(200).json({ success: true, count: fees.length, fees });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Pay student fee online
-// @route   POST /api/parent/fees/pay
-export const payFee = async (req, res, next) => {
-  try {
-    const { feeId, paymentMethod, transactionId } = req.body;
-    const fee = await Fee.findById(feeId);
-
-    if (!fee) {
-      return res.status(404).json({ success: false, message: 'Fee record not found' });
-    }
-
-    // Verify parent ownership of the student for this fee
-    if (fee.studentId) {
-      const isAuthorized = await verifyParentChildAccess(req.user, fee.studentId);
-      if (!isAuthorized && req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied: You are not authorized to settle fees for this student.'
-        });
-      }
-    }
-
-    fee.status = 'paid';
-    fee.paidDate = new Date();
-    fee.paymentMethod = paymentMethod || 'Online - UPI / Card';
-    fee.transactionId = transactionId || 'TXN-' + Math.floor(10000000 + Math.random() * 90000000);
-    fee.receiptNumber = 'RCP-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000);
-
-    await fee.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Payment completed successfully!',
-      fee
-    });
   } catch (error) {
     next(error);
   }
@@ -144,6 +87,116 @@ export const getChildReports = async (req, res, next) => {
 
     const reports = await Report.find({ studentId }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, count: reports.length, reports });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get child test codes and marks (online and offline) for coaching classes
+// @route   GET /api/parent/children/:id/tests
+export const getChildTests = async (req, res, next) => {
+  try {
+    const studentId = req.params.id;
+
+    // Strict IDOR Verification
+    const isAuthorized = await verifyParentChildAccess(req.user, studentId);
+    if (!isAuthorized && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: You do not have permission to view test records for this student.'
+      });
+    }
+
+    const student = await User.findById(studentId).select('class name');
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    // Find tests for this student's class
+    const tests = await Test.find({ class: student.class }).sort({ testDate: -1, createdAt: -1 });
+
+    const results = tests.map(test => {
+      const attempt = test.attempts?.find(a => a.studentId?.toString() === studentId.toString());
+      return {
+        _id: test._id,
+        testCode: test.testCode,
+        title: test.title,
+        subject: test.subject,
+        class: test.class,
+        mode: test.mode || 'online',
+        totalMarks: test.totalMarks,
+        passingMarks: test.passingMarks,
+        testDate: test.testDate || test.createdAt,
+        status: test.status,
+        attempted: Boolean(attempt),
+        score: attempt ? attempt.score : null,
+        percentage: attempt ? attempt.percentage : null,
+        attemptMode: attempt ? (attempt.mode || test.mode) : null,
+        remarks: attempt?.remarks || '',
+        submittedAt: attempt?.submittedAt || null
+      };
+    });
+
+    res.status(200).json({ success: true, count: results.length, tests: results });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getChildHomework = async (req, res, next) => {
+  try {
+    const student = await User.findById(req.params.id).select('class');
+    if (!student || (req.user.role !== 'admin' && !verifyParentChildAccess(req.user, student._id))) {
+      return res.status(404).json({ success: false, message: 'Linked student not found' });
+    }
+
+    const assignments = await Homework.find({ class: student.class }).sort({ dueDate: 1 });
+    const homework = assignments.map((assignment) => {
+      const data = assignment.toObject();
+      const ownSubmission = data.submissions?.find(
+        submission => submission.studentId?.toString() === student._id.toString()
+      );
+      data.submitted = Boolean(ownSubmission);
+      data.studentSubmission = ownSubmission || null;
+      delete data.submissions;
+      return data;
+    });
+    res.status(200).json({ success: true, homework });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getChildTimetable = async (req, res, next) => {
+  try {
+    const student = await User.findById(req.params.id).select('class');
+    if (!student || (req.user.role !== 'admin' && !verifyParentChildAccess(req.user, student._id))) {
+      return res.status(404).json({ success: false, message: 'Linked student not found' });
+    }
+
+    const timetable = await Timetable.find({ class: student.class }).sort({ day: 1, startTime: 1 });
+    res.status(200).json({ success: true, timetable });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getChildAnnouncements = async (req, res, next) => {
+  try {
+    const student = await User.findById(req.params.id).select('class');
+    if (!student || (req.user.role !== 'admin' && !verifyParentChildAccess(req.user, student._id))) {
+      return res.status(404).json({ success: false, message: 'Linked student not found' });
+    }
+
+    const announcements = await Announcement.find({
+      isPublished: true,
+      $or: [
+        { targetRoles: { $in: ['parent', 'student'] } },
+        { targetRoles: { $size: 0 } },
+        { targetClasses: student.class }
+      ]
+    }).sort({ createdAt: -1 }).limit(10);
+    res.status(200).json({ success: true, announcements });
   } catch (error) {
     next(error);
   }

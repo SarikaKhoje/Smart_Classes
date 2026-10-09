@@ -1,10 +1,11 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const homeworkSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, required: true },
   subject: { type: String, required: true },
-  class: { type: String, required: true },
+  class: { type: String, enum: ACADEMIC_CLASSES, required: true },
   teacherId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   teacherName: { type: String },
   dueDate: { type: Date, required: true },

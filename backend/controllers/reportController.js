@@ -1,4 +1,5 @@
 import Report from '../models/Report.js';
+import { notifyLinkedParents } from '../utils/userNotifications.js';
 import User from '../models/User.js';
 import { verifyParentChildAccess } from '../utils/parentAuth.js';
 
@@ -9,21 +10,39 @@ export const getReports = async (req, res, next) => {
     const { studentId, class: className } = req.query;
     let query = {};
 
-    if (req.user.role === 'admin' || req.user.role === 'teacher') {
+    if (req.user.role === 'admin') {
       if (studentId) query.studentId = studentId;
       if (className) query.class = className;
+    } else if (req.user.role === 'teacher') {
+      const assignedClasses = req.user.assignedClasses || [];
+      if (className && !assignedClasses.includes(className)) {
+        return res.status(403).json({ success: false, message: 'You are not authorized to view reports for this class' });
+      }
+      if (studentId) {
+        const isLinkedStudent = req.user.linkedStudents?.some(id => id.toString() === studentId.toString());
+        if (!isLinkedStudent) {
+          return res.status(403).json({ success: false, message: 'You are not authorized to view this student report' });
+        }
+        const student = await User.findOne({
+          _id: studentId,
+          role: 'student',
+          class: className ? className : { $in: assignedClasses }
+        }).select('_id');
+        if (!student) {
+          return res.status(403).json({ success: false, message: 'You are not authorized to view this student report' });
+        }
+        query.studentId = student._id;
+      } else if (className) {
+        query.class = className;
+        query.studentId = { $in: req.user.linkedStudents || [] };
+      } else {
+        query.class = { $in: assignedClasses };
+        query.studentId = { $in: req.user.linkedStudents || [] };
+      }
     } else if (req.user.role === 'student') {
       query.studentId = req.user._id;
     } else if (req.user.role === 'parent') {
-      let childIds = [];
-      if (req.user.children && req.user.children.length > 0) {
-        childIds = req.user.children.map(c => c.studentId).filter(Boolean);
-      }
-      const matching = await User.find({
-        role: 'student',
-        parentEmail: req.user.email.toLowerCase()
-      }).select('_id');
-      const allChildIds = [...childIds, ...matching.map(s => s._id)];
+      const allChildIds = (req.user.children || []).map(child => child.studentId).filter(Boolean);
 
       if (studentId) {
         const isChild = allChildIds.some(id => id.toString() === studentId.toString());
@@ -47,11 +66,24 @@ export const getReports = async (req, res, next) => {
 // @route   POST /api/reports
 export const createReport = async (req, res, next) => {
   try {
-    const { studentId, studentName, class: className, rollNumber, subjects, term, academicYear, teacherRemarks, attendancePercentage } = req.body;
+    const { studentId, subjects, term, academicYear, teacherRemarks, attendancePercentage } = req.body;
+    const student = await User.findOne({ _id: studentId, role: 'student' }).select('name class rollNumber');
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student account not found' });
+    }
+    if (req.user.role === 'teacher' && (
+      !req.user.assignedClasses?.includes(student.class) ||
+      !req.user.linkedStudents?.some(id => id.toString() === student._id.toString())
+    )) {
+      return res.status(403).json({ success: false, message: 'You are not linked to this student' });
+    }
 
     let totalMarks = 0;
     let maxTotal = 0;
 
+    if (!Array.isArray(subjects) || subjects.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one subject score is required' });
+    }
     if (subjects && subjects.length > 0) {
       subjects.forEach(s => {
         totalMarks += Number(s.marks || 0);
@@ -68,10 +100,10 @@ export const createReport = async (req, res, next) => {
     else if (percentage >= 50) overallGrade = 'D';
 
     const report = await Report.create({
-      studentId,
-      studentName,
-      class: className,
-      rollNumber,
+      studentId: student._id,
+      studentName: student.name,
+      class: student.class,
+      rollNumber: student.rollNumber,
       academicYear: academicYear || '2024-2025',
       term: term || 'Term 1',
       subjects,
@@ -79,9 +111,15 @@ export const createReport = async (req, res, next) => {
       percentage,
       overallGrade,
       teacherRemarks,
-      attendancePercentage: attendancePercentage || 88
+      attendancePercentage: attendancePercentage ?? 0
     });
 
+    await notifyLinkedParents(student._id, {
+      type: 'report',
+      title: 'New report card available',
+      message: `${term || 'Term 1'} report card for ${student.name} is available in the parent portal.`,
+      dedupeKey: `report:${report._id}`
+    });
     res.status(201).json({ success: true, message: 'Report card generated successfully', report });
   } catch (error) {
     next(error);

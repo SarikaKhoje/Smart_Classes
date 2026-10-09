@@ -15,20 +15,29 @@ export const getTimetable = async (req, res, next) => {
 
     if (req.user.role === 'student') {
       query.class = req.user.class;
-    } else if (req.user.role === 'teacher') {
-      if (className) query.class = className;
-      else if (req.user.assignedClasses && req.user.assignedClasses.length > 0) {
-        query.$or = [
-          { teacher: req.user._id },
-          { class: { $in: req.user.assignedClasses } }
-        ];
-      } else {
-        query.teacher = req.user._id;
+    } else if (req.user.role === 'parent') {
+      const childIds = (req.user.children || []).map(child => child.studentId).filter(Boolean);
+      const children = await User.find({ _id: { $in: childIds }, role: 'student' }).select('class');
+      const linkedClasses = [...new Set(children.map(child => child.class).filter(Boolean))];
+      if (className && !linkedClasses.includes(className)) {
+        return res.status(403).json({ success: false, message: 'You are not authorized to view this class timetable' });
       }
+      query.class = className || { $in: linkedClasses };
+    } else if (req.user.role === 'teacher') {
+      const assignedClasses = req.user.assignedClasses || [];
+      if (className && !assignedClasses.includes(className)) {
+        return res.status(403).json({ success: false, message: 'You are not authorized to view this class timetable' });
+      }
+      query.teacher = req.user._id;
+      if (className) query.class = className;
+      else if (assignedClasses.length > 0) query.class = { $in: assignedClasses };
     } else if (className) {
       query.class = className;
     }
 
+    if (teacherId && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only administrators can filter timetable by teacher ID' });
+    }
     if (teacherId) query.teacher = teacherId;
     if (day) query.day = day;
 

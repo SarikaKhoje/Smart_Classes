@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const attendanceSchema = new mongoose.Schema({
   studentId: {
@@ -12,6 +13,7 @@ const attendanceSchema = new mongoose.Schema({
   },
   class: {
     type: String,
+    enum: ACADEMIC_CLASSES,
     required: true
   },
   date: {

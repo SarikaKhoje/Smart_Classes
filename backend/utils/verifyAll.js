@@ -15,7 +15,10 @@ import { verifyParentChildAccess } from '../utils/parentAuth.js';
 
 dotenv.config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'kashvi_super_secure_jwt_secret_key_2024_academic';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 characters before running verification');
+}
 const generateToken = (id, role) => jwt.sign({ id, role }, JWT_SECRET, { expiresIn: '1d' });
 
 async function runVerification() {
@@ -42,10 +45,10 @@ async function runVerification() {
   const teacher = await User.findOne({ role: 'teacher' });
   if (teacher) {
     // Create initial slot
-    await Timetable.deleteMany({ class: 'TEST-10-A' });
+    await Timetable.deleteMany({ class: '10', subject: 'Verification Test' });
     const slot1 = await Timetable.create({
-      class: 'TEST-10-A',
-      subject: 'Math',
+      class: '10',
+      subject: 'Verification Test',
       teacher: teacher._id,
       teacherName: teacher.name,
       day: 'Monday',
@@ -59,7 +62,7 @@ async function runVerification() {
     const teacherConflict = isOverlapping('09:30', '10:30', slot1.startTime, slot1.endTime);
     console.log(`Teacher Collision on Overlapping Slot (09:30-10:30 vs 09:00-10:00): ${teacherConflict ? '✅ DETECTED (PASS)' : '❌ MISSED (FAIL)'}`);
     results.push({ name: 'Timetable Collision Detection', pass: teacherConflict });
-    await Timetable.deleteMany({ class: 'TEST-10-A' });
+    await Timetable.deleteMany({ class: '10', subject: 'Verification Test' });
   }
 
   // 3. Verify Notes Schema
@@ -68,7 +71,7 @@ async function runVerification() {
     title: 'Verification Note - Calculus Basics',
     description: 'Unit 1 formula sheet',
     subject: 'Mathematics',
-    class: '10-A',
+    class: '10',
     uploadedBy: teacher ? teacher._id : new mongoose.Types.ObjectId(),
     fileUrl: '/uploads/sample-calc.pdf',
     fileName: 'sample-calc.pdf'

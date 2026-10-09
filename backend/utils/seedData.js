@@ -15,18 +15,15 @@ const seedDB = async () => {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/kashvi_smartclass');
     console.log('🔄 Connected to MongoDB. Seeding initial data...');
 
-    // Clear existing collections
-    await Promise.all([
-      User.deleteMany({}),
-      Attendance.deleteMany({}),
-      Homework.deleteMany({}),
-      Test.deleteMany({}),
-      Fee.deleteMany({}),
-      Announcement.deleteMany({}),
-      Report.deleteMany({})
-    ]);
-
-    console.log('🧹 Old collections cleared.');
+    const collections = await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray();
+    const populatedCollections = await Promise.all(collections.map(async ({ name }) => ({
+      name,
+      hasRecords: await mongoose.connection.db.collection(name).countDocuments({}, { limit: 1 }) > 0
+    })));
+    const populatedNames = populatedCollections.filter(collection => collection.hasRecords).map(collection => collection.name);
+    if (populatedNames.length) {
+      throw new Error(`Seeding stopped: database collections already contain records (${populatedNames.join(', ')}). Demo seeding never deletes or overwrites data.`);
+    }
 
     // 1. Create Core Users
     const admin = await User.create({
@@ -46,7 +43,8 @@ const seedDB = async () => {
       password: 'Teacher@123',
       role: 'teacher',
       subject: 'Mathematics',
-      assignedClasses: ['10-A', '9-B', '8-A'],
+      assignedClasses: ['10', '9', '8', '7'],
+      linkedStudents: [],
       phone: '+91 98765 43211'
     });
 
@@ -57,7 +55,8 @@ const seedDB = async () => {
       password: 'Teacher@123',
       role: 'teacher',
       subject: 'Physics',
-      assignedClasses: ['10-A', '10-B'],
+      assignedClasses: ['10', '9', '8', '7'],
+      linkedStudents: [],
       phone: '+91 98765 43212'
     });
 
@@ -67,7 +66,7 @@ const seedDB = async () => {
       email: 'student@kashvi.com',
       password: 'Student@123',
       role: 'student',
-      class: '10-A',
+      class: '10',
       rollNumber: '12',
       parentEmail: 'parent@kashvi.com',
       dateOfBirth: new Date('2009-04-15'),
@@ -80,7 +79,7 @@ const seedDB = async () => {
       email: 'rhea@kashvi.com',
       password: 'Student@123',
       role: 'student',
-      class: '10-A',
+      class: '10',
       rollNumber: '08',
       parentEmail: 'parent@kashvi.com',
       dateOfBirth: new Date('2009-08-22'),
@@ -93,7 +92,7 @@ const seedDB = async () => {
       email: 'siddharth@kashvi.com',
       password: 'Student@123',
       role: 'student',
-      class: '9-B',
+      class: '9',
       rollNumber: '15',
       parentEmail: 'parent@kashvi.com',
       dateOfBirth: new Date('2010-01-10'),
@@ -109,9 +108,17 @@ const seedDB = async () => {
       phone: '+91 98765 43230',
       children: [
         { studentId: student1._id, studentName: 'Aarav Sharma', relationship: 'Son' },
-        { studentId: student2._id, studentName: 'Rhea Kulkarni', relationship: 'Ward' }
+        { studentId: student2._id, studentName: 'Rhea Kulkarni', relationship: 'Ward' },
+        { studentId: student3._id, studentName: 'Siddharth Patel', relationship: 'Ward' }
       ]
     });
+    await User.updateMany(
+      { _id: { $in: [student1._id, student2._id, student3._id] } },
+      { $set: { parents: [parent._id], parentEmail: parent.email } }
+    );
+    teacher1.linkedStudents = [student1._id, student2._id, student3._id];
+    teacher2.linkedStudents = [student1._id, student2._id, student3._id];
+    await Promise.all([teacher1.save(), teacher2.save()]);
 
     console.log('👤 Core users created (Admin, Teachers, Students, Parents).');
 
@@ -124,7 +131,7 @@ const seedDB = async () => {
       attendanceRecords.push({
         studentId: student1._id,
         studentName: student1.name,
-        class: '10-A',
+        class: '10',
         date: d,
         status: i === 3 ? 'absent' : (i === 7 ? 'leave' : 'present'),
         markedBy: teacher1._id,
@@ -133,7 +140,7 @@ const seedDB = async () => {
       attendanceRecords.push({
         studentId: student2._id,
         studentName: student2.name,
-        class: '10-A',
+        class: '10',
         date: d,
         status: 'present',
         markedBy: teacher1._id,
@@ -149,7 +156,7 @@ const seedDB = async () => {
         title: 'Quadratic Equations Practice Set 4.2',
         description: 'Complete questions 1 to 15 from Chapter 4 and upload your working PDF.',
         subject: 'Mathematics',
-        class: '10-A',
+        class: '10',
         teacherId: teacher1._id,
         teacherName: teacher1.name,
         dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
@@ -160,7 +167,7 @@ const seedDB = async () => {
         title: 'Newton Laws of Motion & Friction Lab Report',
         description: 'Summarize the laboratory findings on kinetic vs static friction coefficients.',
         subject: 'Physics',
-        class: '10-A',
+        class: '10',
         teacherId: teacher2._id,
         teacherName: teacher2.name,
         dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
@@ -175,7 +182,7 @@ const seedDB = async () => {
       {
         title: 'Term 1 Mathematics Assessment',
         subject: 'Mathematics',
-        class: '10-A',
+        class: '10',
         teacherId: teacher1._id,
         duration: 30,
         totalMarks: 20,
@@ -192,7 +199,7 @@ const seedDB = async () => {
       {
         title: 'Physics Mechanics Quick Quiz',
         subject: 'Physics',
-        class: '10-A',
+        class: '10',
         teacherId: teacher2._id,
         duration: 20,
         totalMarks: 15,
@@ -212,7 +219,7 @@ const seedDB = async () => {
       {
         studentId: student1._id,
         studentName: student1.name,
-        class: '10-A',
+        class: '10',
         month: 'September',
         year: 2024,
         amount: 4500,
@@ -222,7 +229,7 @@ const seedDB = async () => {
       {
         studentId: student1._id,
         studentName: student1.name,
-        class: '10-A',
+        class: '10',
         month: 'August',
         year: 2024,
         amount: 4500,
@@ -236,7 +243,7 @@ const seedDB = async () => {
       {
         studentId: student2._id,
         studentName: student2.name,
-        class: '10-A',
+        class: '10',
         month: 'September',
         year: 2024,
         amount: 4500,
@@ -276,7 +283,7 @@ const seedDB = async () => {
     await Report.create({
       studentId: student1._id,
       studentName: student1.name,
-      class: '10-A',
+      class: '10',
       rollNumber: '12',
       academicYear: '2024-2025',
       term: 'Term 1',

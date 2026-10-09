@@ -11,9 +11,18 @@ import timetableRoutes from './timetableRoutes.js';
 import onlineClassRoutes from './onlineClassRoutes.js';
 import aiRoutes from './aiRoutes.js';
 import notificationRoutes from './notificationRoutes.js';
+import feedbackRoutes from './feedbackRoutes.js';
+import checkInRoutes from './checkInRoutes.js';
+import userNotificationRoutes from './userNotificationRoutes.js';
+import parentTeacherMessageRoutes from './parentTeacherMessageRoutes.js';
+import parentTeacherMeetingRoutes from './parentTeacherMeetingRoutes.js';
+import publicRoutes from './publicRoutes.js';
+import admissionEnquiryRoutes from './admissionEnquiryRoutes.js';
+import validateAcademicClass from '../middleware/validateAcademicClass.js';
 
 const router = express.Router();
 
+router.use(validateAcademicClass);
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/teacher', teacherRoutes);
@@ -26,5 +35,12 @@ router.use('/timetable', timetableRoutes);
 router.use('/online-classes', onlineClassRoutes);
 router.use('/ai', aiRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/feedback', feedbackRoutes);
+router.use('/check-ins', checkInRoutes);
+router.use('/user-notifications', userNotificationRoutes);
+router.use('/messages', parentTeacherMessageRoutes);
+router.use('/meetings', parentTeacherMeetingRoutes);
+router.use('/public', publicRoutes);
+router.use('/admission-enquiries', admissionEnquiryRoutes);
 
 export default router;

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const onlineClassSchema = new mongoose.Schema({
   title: {
@@ -12,7 +13,8 @@ const onlineClassSchema = new mongoose.Schema({
   },
   class: {
     type: String,
-    required: [true, 'Target class is required (e.g. 10-A)']
+    enum: ACADEMIC_CLASSES,
+    required: [true, 'Target grade is required (7, 8, 9, or 10)']
   },
   section: {
     type: String,

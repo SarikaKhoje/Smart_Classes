@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import {
   Sparkles,
@@ -15,18 +16,31 @@ import {
   BookOpen,
   ArrowRight,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  MessageSquareText
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useLanguage } from '../context/LanguageContext';
 
 export const StudentDashboard = () => {
+  const { language, t } = useLanguage();
+  const { user } = useAuth();
   const location = useLocation();
   const path = location.pathname;
+  const studentClass = user?.class || '—';
 
   const [stats, setStats] = useState(null);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [homework, setHomework] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const [onlineClasses, setOnlineClasses] = useState([]);
+  const [tests, setTests] = useState([]);
+  const [activeTest, setActiveTest] = useState(null);
+  const [testAnswers, setTestAnswers] = useState({});
+  const [testResult, setTestResult] = useState(null);
+  const [testSubmitting, setTestSubmitting] = useState(false);
+  const [feedbackForms, setFeedbackForms] = useState([]);
+  const [feedbackDrafts, setFeedbackDrafts] = useState({});
   const [loading, setLoading] = useState(true);
 
   // Homework submission modal state (Bugs C1, C2, C3)
@@ -42,45 +56,38 @@ export const StudentDashboard = () => {
   const [studyHoursDaily, setStudyHoursDaily] = useState(3);
   const [weakSubjects, setWeakSubjects] = useState(['Mathematics', 'Science']);
 
-  // Online Quiz State
-  const [quizQuestions] = useState([
-    { q: 'What is the value of x if 2x + 8 = 20?', options: ['A) 4', 'B) 6', 'C) 8', 'D) 10'], correct: 1 },
-    { q: 'Which law of motion is known as Law of Inertia?', options: ['A) First Law', 'B) Second Law', 'C) Third Law', 'D) Universal Gravitation'], correct: 0 },
-    { q: 'What is the chemical formula for Calcium Carbonate?', options: ['A) CaO', 'B) Ca(OH)2', 'C) CaCO3', 'D) CaCl2'], correct: 2 },
-    { q: 'If sin(θ) = 1/2, what is the value of θ in standard acute degrees?', options: ['A) 45°', 'B) 30°', 'C) 60°', 'D) 90°'], correct: 1 },
-    { q: 'Which organelle is the powerhouse of the cell?', options: ['A) Ribosome', 'B) Mitochondria', 'C) Golgi apparatus', 'D) Endoplasmic Reticulum'], correct: 1 }
-  ]);
-  const [currentQIndex, setCurrentQIndex] = useState(0);
-  const [selectedAnswers, setSelectedAnswers] = useState({});
-  const [quizSubmitted, setQuizSubmitted] = useState(false);
-  const [quizResult, setQuizResult] = useState(null);
-
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [dashRes, hwRes, lbRes, classRes, planRes] = await Promise.all([
+      const [dashRes, attendanceRes, hwRes, lbRes, classRes, planRes, feedbackRes, testsRes] = await Promise.all([
         api.get('/student/dashboard'),
+        api.get('/student/attendance'),
         api.get('/student/homework'),
         api.get('/student/leaderboard'),
         api.get('/online-classes'),
-        api.get('/student/study-plan').catch(() => ({ data: { plan: null } }))
+        api.get('/student/study-plan').catch(() => ({ data: { plan: null } })),
+        api.get('/feedback/student'),
+        api.get('/student/tests')
       ]);
       setStats(dashRes.data?.stats);
+      setAttendanceRecords(attendanceRes.data?.attendance || []);
       setHomework(hwRes.data?.homework || []);
       setLeaderboard(lbRes.data?.leaderboard || []);
       setOnlineClasses(classRes.data?.onlineClasses || []);
+      setTests(testsRes.data?.tests || []);
+      setFeedbackForms(feedbackRes.data?.forms || []);
       if (planRes.data?.plan) {
         setAiPlan(planRes.data.plan);
       }
     } catch (err) {
-      toast.error('Failed to load student workspace');
+      toast.error(t('Failed to load student workspace'));
     }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [t]);
 
   const handleGenerateAIPlan = async () => {
     setAiLoading(true);
@@ -92,10 +99,10 @@ export const StudentDashboard = () => {
       });
       if (res.data?.success) {
         setAiPlan(res.data.plan);
-        toast.success('AI Study Plan generated & saved to your profile!', { icon: '✨' });
+        toast.success(t('AI Study Plan generated & saved to your profile!'), { icon: '✨' });
       }
     } catch (err) {
-      toast.error('AI Study plan generation failed. Please try again.');
+      toast.error(t('AI Study plan generation failed. Please try again.'));
     }
     setAiLoading(false);
   };
@@ -116,43 +123,61 @@ export const StudentDashboard = () => {
         feedback: solutionText || 'Completed assignment submission'
       });
       if (res.data?.success) {
-        toast.success('Solution submitted successfully!');
+        toast.success(t('Solution submitted successfully!'));
         setSelectedHw(null);
         fetchData();
       }
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Error submitting homework');
+      toast.error(err.response?.data?.message || t('Error submitting homework'));
     }
     setSubmittingHw(false);
   };
 
-  const handleSelectOption = (optIndex) => {
-    setSelectedAnswers({
-      ...selectedAnswers,
-      [currentQIndex]: optIndex
-    });
-  };
-
-  const handleSubmitQuiz = () => {
-    let score = 0;
-    let correctCount = 0;
-    let wrongCount = 0;
-
-    quizQuestions.forEach((q, idx) => {
-      const ans = selectedAnswers[idx];
-      if (ans !== undefined && ans === q.correct) {
-        score += 1;
-        correctCount++;
-      } else {
-        wrongCount++;
+  const handleSubmitFeedback = async (formId, e) => {
+    e.preventDefault();
+    const draft = feedbackDrafts[formId] || { rating: '5', comment: '' };
+    try {
+      const res = await api.post(`/feedback/student/${formId}/responses`, draft);
+      if (res.data?.success) {
+        toast.success(t('Your lecture feedback was submitted'));
+        setFeedbackDrafts((prev) => ({ ...prev, [formId]: { rating: '5', comment: '' } }));
+        fetchData();
       }
-    });
-
-    const percentage = ((score / quizQuestions.length) * 100).toFixed(0);
-    setQuizResult({ score, total: quizQuestions.length, percentage, correctCount, wrongCount });
-    setQuizSubmitted(true);
-    toast.success(`Assessment Completed! You scored ${score}/${quizQuestions.length}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || t('Failed to submit lecture feedback'));
+    }
   };
+
+  const startTest = (test) => {
+    setActiveTest(test);
+    setTestAnswers({});
+    setTestResult(null);
+  };
+
+  const handleSubmitTest = async (event) => {
+    event.preventDefault();
+    if (!activeTest || testSubmitting) return;
+    setTestSubmitting(true);
+    try {
+      const response = await api.post(`/student/tests/${activeTest._id}/submit`, { answers: testAnswers });
+      setTestResult(response.data.result);
+      setTests(current => current.map(test => test._id === activeTest._id ? { ...test, submitted: true } : test));
+      toast.success(t('Test submitted successfully'));
+    } catch (err) {
+      toast.error(err.response?.data?.message || t('Could not submit test'));
+    } finally {
+      setTestSubmitting(false);
+    }
+  };
+  const attendanceSummary = {
+    present: attendanceRecords.filter(record => record.status === 'present').length,
+    absent: attendanceRecords.filter(record => record.status === 'absent').length,
+    leave: attendanceRecords.filter(record => ['leave', 'holiday'].includes(record.status)).length
+  };
+  const attendancePercentage = attendanceRecords.length
+    ? ((attendanceSummary.present / attendanceRecords.length) * 100).toFixed(1)
+    : '0.0';
+  const studentRank = leaderboard.find(item => item.id === user?.uniqueId)?.rank;
 
   return (
     <Layout>
@@ -162,18 +187,22 @@ export const StudentDashboard = () => {
           <div>
             <h2 className="text-2xl font-black text-white">
               {path.includes('/attendance')
-                ? 'Attendance Analytics'
+                ? t('Attendance Analytics')
                 : path.includes('/homework')
-                ? 'Homework & Submissions'
+                ? t('Homework & Submissions')
                 : path.includes('/leaderboard')
-                ? 'Academic Leaderboard'
+                ? t('Academic Leaderboard')
                 : path.includes('/ai-plan')
-                ? 'AI Personalized Study Plan'
+                ? t('AI Personalized Study Plan')
                 : path.includes('/classes')
-                ? 'Live Virtual Classes'
-                : 'Student Learning Workspace'}
+                ? t('Live Virtual Classes')
+                : path.includes('/feedback')
+                ? t('Lecture Feedback')
+                : path.includes('/tests')
+                ? t('Online Assessments')
+                : t('Student Learning Workspace')}
             </h2>
-            <p className="text-xs text-slate-400">Class 10-A Academic Portal & AI Study Companion</p>
+            <p className="text-xs text-slate-400">{t('Class')} {studentClass} {t('Academic Portal & AI Study Companion')}</p>
           </div>
         </div>
 
@@ -184,151 +213,140 @@ export const StudentDashboard = () => {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Attendance Rate</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Attendance Rate')}</span>
                   <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-400">
                     <CalendarCheck className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
-                  <h3 className="text-2xl font-black text-white">{stats?.attendancePercentage || '94.2'}%</h3>
-                  <p className="mt-1 text-[11px] text-emerald-400">Excellent Standing (Target &gt; 85%)</p>
+                  <h3 className="text-2xl font-black text-white">{attendancePercentage}%</h3>
+                  <p className="mt-1 text-[11px] text-slate-400">{t('{{count}} recorded days', { count: attendanceRecords.length })}</p>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Pending Tasks</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Pending Tasks')}</span>
                   <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-400">
                     <FileText className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
                   <h3 className="text-2xl font-black text-white">{homework.length}</h3>
-                  <p className="mt-1 text-[11px] text-amber-400">Assignments Due This Week</p>
+                  <p className="mt-1 text-[11px] text-amber-400">{t('Assignments Due This Week')}</p>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Batch Rank</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Batch Rank')}</span>
                   <div className="rounded-xl bg-amber-500/10 p-2.5 text-amber-400">
                     <Trophy className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
-                  <h3 className="text-2xl font-black text-white">#1 in Class 10-A</h3>
-                  <p className="mt-1 text-[11px] text-emerald-400">Top 5% Academic Percentile</p>
+                  <h3 className="text-2xl font-black text-white">{studentRank ? `#${studentRank} ${t('in Class')} ${studentClass}` : t('Not ranked yet')}</h3>
+                  <p className="mt-1 text-[11px] text-slate-400">{t('{{count}} students ranked', { count: leaderboard.length })}</p>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">AI Study Engine</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('AI Study Engine')}</span>
                   <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-400">
                     <Sparkles className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
-                  <h3 className="text-2xl font-black text-indigo-400">Active</h3>
-                  <p className="mt-1 text-[11px] text-slate-400">Gemini-Powered Optimizer</p>
+                  <h3 className="text-2xl font-black text-indigo-400">{t(aiPlan ? 'Ready' : 'Available')}</h3>
+                  <p className="mt-1 text-[11px] text-slate-400">{t('Personalized study planner')}</p>
                 </div>
               </div>
             </div>
 
-            {/* Quick Practice Test Assessment Widget */}
-            <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-slate-900/90 via-indigo-950/40 to-slate-900/90 p-6 backdrop-blur-2xl">
-              <div className="mb-4 flex items-center justify-between border-b border-indigo-500/20 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-xl bg-indigo-600 p-2 text-white">
-                    <Award className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">Daily SmartClass Knowledge Booster</h3>
-                    <p className="text-xs text-indigo-300">Physics & Mathematics Concept Retention</p>
-                  </div>
+            <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-slate-900/90 via-indigo-950/40 to-slate-900/90 p-6">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-white">{t('Published assessments')}</h3>
+                  <p className="mt-1 text-xs text-indigo-300">{t('Tests assigned to Class')} {studentClass}</p>
                 </div>
-                <span className="rounded-full bg-indigo-500/20 px-3 py-1 text-xs font-mono font-bold text-indigo-300">
-                  Question {currentQIndex + 1} of {quizQuestions.length}
-                </span>
+                <Link to="/dashboard/student/tests" className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500">
+                  {t('View assessments')} ({tests.length})
+                </Link>
               </div>
-
-              {!quizSubmitted ? (
-                <div className="space-y-4">
-                  <p className="text-sm font-semibold text-slate-200">
-                    {quizQuestions[currentQIndex].q}
-                  </p>
-
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    {quizQuestions[currentQIndex].options.map((opt, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => handleSelectOption(idx)}
-                        className={`rounded-xl p-3 text-left text-xs font-medium transition-all ${
-                          selectedAnswers[currentQIndex] === idx
-                            ? 'border border-indigo-500 bg-indigo-600/30 text-white shadow-md shadow-indigo-500/20'
-                            : 'border border-slate-800 bg-slate-950/60 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2">
-                    <button
-                      type="button"
-                      disabled={currentQIndex === 0}
-                      onClick={() => setCurrentQIndex(currentQIndex - 1)}
-                      className="rounded-xl border border-slate-800 px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 disabled:opacity-30"
-                    >
-                      Previous
-                    </button>
-
-                    {currentQIndex < quizQuestions.length - 1 ? (
-                      <button
-                        type="button"
-                        onClick={() => setCurrentQIndex(currentQIndex + 1)}
-                        className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
-                      >
-                        Next Question →
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleSubmitQuiz}
-                        className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-500"
-                      >
-                        Submit Assessment
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl bg-slate-950/80 p-5 text-center">
-                  <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400">
-                    <CheckCircle2 className="h-6 w-6" />
-                  </div>
-                  <h4 className="text-lg font-bold text-white">Assessment Complete!</h4>
-                  <p className="mt-1 text-sm text-slate-300">
-                    You answered <span className="font-bold text-emerald-400">{quizResult?.score}</span> out of{' '}
-                    <span className="font-bold text-white">{quizResult?.total}</span> questions correctly ({quizResult?.percentage}%).
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuizSubmitted(false);
-                      setSelectedAnswers({});
-                      setCurrentQIndex(0);
-                    }}
-                    className="mt-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-xs font-bold text-indigo-400 hover:bg-indigo-500/20"
-                  >
-                    Retake Practice
-                  </button>
-                </div>
-              )}
+              {tests.length === 0 && <p className="mt-4 text-xs text-slate-400">{t('No published tests are available for your class.')}</p>}
             </div>
           </div>
+        )}
+
+        {path.includes('/tests') && (
+          <section className="space-y-4">
+            {activeTest ? (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">{activeTest.title}</h3>
+                    <p className="mt-1 text-xs text-slate-400">{activeTest.subject} · {activeTest.duration} minutes · {activeTest.totalMarks} marks</p>
+                  </div>
+                  <button type="button" onClick={() => { setActiveTest(null); setTestResult(null); }} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">
+                  {t('Back to tests')}
+                  </button>
+                </div>
+                {testResult ? (
+                  <div className="rounded-xl bg-slate-950 p-5 text-center">
+                    <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-400" />
+                    <h4 className="mt-2 text-lg font-bold text-white">{t('Assessment submitted')}</h4>
+                    <p className="mt-1 text-sm text-slate-300">{t('Score')}: {testResult.score} / {testResult.totalMarks} ({testResult.percentage}%)</p>
+                    <p className="mt-1 text-xs text-slate-400">{testResult.isPassed ? t('Passing score achieved') : t('Keep practising and review your study materials')}</p>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmitTest} className="space-y-5">
+                    {activeTest.questions.map((question, index) => (
+                      <fieldset key={`${activeTest._id}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                        <legend className="px-1 text-sm font-semibold text-slate-200">{index + 1}. {question.question}</legend>
+                        {question.options?.length ? (
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            {question.options.map(option => (
+                              <label key={option} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs ${testAnswers[index] === option ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-800 text-slate-300'}`}>
+                                <input type="radio" name={`question-${index}`} value={option} checked={testAnswers[index] === option} onChange={() => setTestAnswers(current => ({ ...current, [index]: option }))} />
+                                {option}
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            maxLength={1000}
+                            value={testAnswers[index] || ''}
+                            onChange={event => setTestAnswers(current => ({ ...current, [index]: event.target.value }))}
+                            className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+                            aria-label={`Answer for question ${index + 1}`}
+                          />
+                        )}
+                      </fieldset>
+                    ))}
+                    <button type="submit" disabled={testSubmitting || activeTest.submitted} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">
+                      {testSubmitting ? t('Submitting…') : t('Submit assessment')}
+                    </button>
+                  </form>
+                )}
+              </div>
+            ) : tests.length ? tests.map(test => (
+              <article key={test._id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white">{test.title}</h3>
+                  <p className="mt-1 text-xs text-slate-400">{test.subject} · {test.questions.length} questions · {test.duration} minutes · {test.totalMarks} marks</p>
+                </div>
+                {test.submitted ? (
+                  <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">{t('Submitted')}</span>
+                ) : (
+                  <button type="button" onClick={() => startTest(test)} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500">{t('Start test')}</button>
+                )}
+              </article>
+            )) : (
+              <p className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center text-sm text-slate-400">{t('No published assessments are available for your class.')}</p>
+            )}
+          </section>
         )}
 
         {/* 2. ATTENDANCE ANALYTICS (Bug B8) */}
@@ -336,27 +354,64 @@ export const StudentDashboard = () => {
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-xl space-y-6">
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-sm font-bold text-white">Monthly Attendance Summary</h3>
-                <p className="text-xs text-slate-400">Class 10-A Session 2024-2025</p>
+                <h3 className="text-sm font-bold text-white">{t('Monthly Attendance Summary')}</h3>
+                <p className="text-xs text-slate-400">{t('Based on your recorded attendance')}</p>
               </div>
               <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-400 border border-emerald-500/30">
-                94.2% Overall Presence
+                {attendancePercentage}% {t('Overall Presence')}
               </span>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <span className="text-xs text-slate-400">Present Days</span>
-                <h4 className="mt-1 text-2xl font-black text-emerald-400">38 Days</h4>
+                <span className="text-xs text-slate-400">{t('Present Days')}</span>
+                <h4 className="mt-1 text-2xl font-black text-emerald-400">{attendanceSummary.present} {t('Days')}</h4>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <span className="text-xs text-slate-400">Absent Days</span>
-                <h4 className="mt-1 text-2xl font-black text-rose-400">2 Days</h4>
+                <span className="text-xs text-slate-400">{t('Absent Days')}</span>
+                <h4 className="mt-1 text-2xl font-black text-rose-400">{attendanceSummary.absent} {t('Days')}</h4>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <span className="text-xs text-slate-400">Leave / Excused</span>
-                <h4 className="mt-1 text-2xl font-black text-amber-400">1 Day</h4>
+                <span className="text-xs text-slate-400">{t('Leave / Excused')}</span>
+                <h4 className="mt-1 text-2xl font-black text-amber-400">{attendanceSummary.leave} {t('Days')}</h4>
               </div>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-slate-800">
+              <table className="w-full min-w-[440px] text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">{t('Date')}</th>
+                    <th className="px-4 py-3 font-semibold">{t('Subject / Session')}</th>
+                    <th className="px-4 py-3 text-right font-semibold">{t('Attendance')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {attendanceRecords.map(record => (
+                    <tr key={record._id} className="text-slate-300">
+                      <td className="px-4 py-3 font-medium text-white">{new Date(record.date).toLocaleDateString(language === 'mr' ? 'mr-IN' : language === 'hi' ? 'hi-IN' : 'en-IN')}</td>
+                      <td className="px-4 py-3">{record.subject || t('Regular Session')}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
+                          record.status === 'present'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : record.status === 'absent'
+                              ? 'bg-rose-500/10 text-rose-400'
+                              : 'bg-amber-500/10 text-amber-400'
+                        }`}>
+                          {t(record.status)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {attendanceRecords.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                        {t('No attendance has been recorded yet.')}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -402,7 +457,7 @@ export const StudentDashboard = () => {
                         className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
                       >
                         <Upload className="h-3.5 w-3.5" />
-                        <span>Submit Solution</span>
+                        <span>{t('Submit Solution')}</span>
                       </button>
                     )}
                   </div>
@@ -417,8 +472,8 @@ export const StudentDashboard = () => {
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-sm font-bold text-white">Class 10-A Academic Leaderboard</h3>
-                <p className="text-xs text-slate-400">Calculated from weighted test scores and attendance consistency</p>
+                <h3 className="text-sm font-bold text-white">Class {studentClass} Academic Leaderboard</h3>
+                <p className="text-xs text-slate-400">{t('Calculated from weighted test scores and attendance consistency')}</p>
               </div>
               <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-400 border border-amber-500/30">
                 Live Rankings
@@ -429,11 +484,11 @@ export const StudentDashboard = () => {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="pb-3 font-semibold">Rank</th>
-                    <th className="pb-3 font-semibold">Student Name</th>
-                    <th className="pb-3 font-semibold">Average Score</th>
-                    <th className="pb-3 font-semibold">Attendance</th>
-                    <th className="pb-3 text-right font-semibold">Performance Tier</th>
+                    <th className="pb-3 font-semibold">{t('Rank')}</th>
+                    <th className="pb-3 font-semibold">{t('Student Name')}</th>
+                    <th className="pb-3 font-semibold">{t('Average Score')}</th>
+                    <th className="pb-3 font-semibold">{t('Attendance')}</th>
+                    <th className="pb-3 text-right font-semibold">{t('Performance Tier')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -480,7 +535,7 @@ export const StudentDashboard = () => {
                   <Sparkles className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Personalized AI Academic Planner</h3>
+                  <h3 className="text-base font-bold text-white">{t('Personalized AI Academic Planner')}</h3>
                   <p className="text-xs text-slate-400">
                     Engineered with adaptive syllabus modeling & Gemini AI optimization
                   </p>
@@ -489,18 +544,18 @@ export const StudentDashboard = () => {
 
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300">Target Examination</label>
+                  <label className="block text-xs font-semibold text-slate-300">{t('Target Examination')}</label>
                   <input
                     type="text"
                     value={targetExam}
                     onChange={(e) => setTargetExam(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                    placeholder="e.g. CBSE 10th Board Pre-Finals"
+                    placeholder={t('e.g. CBSE 10th Board Pre-Finals')}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300">Daily Study Hours: {studyHoursDaily} hrs</label>
+                  <label className="block text-xs font-semibold text-slate-300">{t('Daily Study Hours: {{hours}} hrs', { hours: studyHoursDaily })}</label>
                   <input
                     type="range"
                     min="1"
@@ -520,7 +575,7 @@ export const StudentDashboard = () => {
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500 disabled:opacity-50"
                   >
                     <Sparkles className="h-4 w-4" />
-                    <span>{aiLoading ? 'Generating with Gemini AI...' : 'Generate / Refresh AI Plan'}</span>
+                    <span>{aiLoading ? t('Generating with Gemini AI...') : t('Generate / Refresh AI Plan')}</span>
                   </button>
                 </div>
               </div>
@@ -565,7 +620,7 @@ export const StudentDashboard = () => {
                 {aiPlan.recommendations && aiPlan.recommendations.length > 0 && (
                   <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400 mb-2">
-                      Academic Tutor Recommendations
+                      {t('Academic Tutor Recommendations')}
                     </h4>
                     <ul className="space-y-1.5 text-xs text-slate-300">
                       {aiPlan.recommendations.map((rec, idx) => (
@@ -581,7 +636,7 @@ export const StudentDashboard = () => {
             ) : (
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center backdrop-blur-xl">
                 <Sparkles className="mx-auto mb-2 h-8 w-8 text-slate-600" />
-                <p className="text-xs text-slate-400">Click &quot;Generate AI Plan&quot; above to create your structured study timetable.</p>
+                <p className="text-xs text-slate-400">{t('Click "Generate AI Plan" above to create your structured study timetable.')}</p>
               </div>
             )}
           </div>
@@ -620,16 +675,91 @@ export const StudentDashboard = () => {
           </div>
         )}
 
+        {path.includes('/feedback') && (
+          <div className="space-y-4">
+            {feedbackForms.length === 0 ? (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center">
+                <MessageSquareText className="mx-auto mb-3 h-8 w-8 text-slate-600" />
+                <p className="text-sm font-semibold text-white">{t('No lecture feedback forms available')}</p>
+                <p className="mt-1 text-xs text-slate-400">{t('Your teacher will post a form here after a lecture.')}</p>
+              </div>
+            ) : feedbackForms.map((form) => {
+              const draft = feedbackDrafts[form._id] || { rating: '5', comment: '' };
+              return (
+                <section key={form._id} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white">{form.title}</h3>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {form.subject} · Class {form.class} · {new Date(form.lectureDate).toLocaleDateString()}
+                      </p>
+                      <p className="mt-2 text-xs text-slate-300">{form.question}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">Teacher: {form.teacherName}. Your response is visible to your teacher.</p>
+                    </div>
+                    {form.hasSubmitted && (
+                      <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-300">
+                        Feedback submitted
+                      </span>
+                    )}
+                  </div>
+                  {!form.hasSubmitted && (
+                    <form onSubmit={(e) => handleSubmitFeedback(form._id, e)} className="mt-4 space-y-3 border-t border-slate-800 pt-4">
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Lesson rating
+                        <select
+                          required
+                          value={draft.rating}
+                          onChange={(e) => setFeedbackDrafts((prev) => ({
+                            ...prev,
+                            [form._id]: { ...draft, rating: e.target.value }
+                          }))}
+                          className="mt-1 block w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 sm:max-w-xs"
+                        >
+                          <option value="5">{t('5 - Excellent')}</option>
+                          <option value="4">{t('4 - Very good')}</option>
+                          <option value="3">{t('3 - Good')}</option>
+                          <option value="2">{t('2 - Needs improvement')}</option>
+                          <option value="1">{t('1 - Not helpful')}</option>
+                        </select>
+                      </label>
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Comment (optional)
+                        <textarea
+                          rows={3}
+                          maxLength={1000}
+                          value={draft.comment}
+                          onChange={(e) => setFeedbackDrafts((prev) => ({
+                            ...prev,
+                            [form._id]: { ...draft, comment: e.target.value }
+                          }))}
+                          className="mt-1 block w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                          placeholder="What worked well? What could be clearer?"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500"
+                      >
+                        Submit Feedback
+                      </button>
+                    </form>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
+
         {/* SUBMIT HOMEWORK MODAL (Bugs C1, C2) */}
         {selectedHw && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
             <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
-              <h3 className="text-lg font-bold text-white">Submit Homework Solution</h3>
+              <h3 className="text-lg font-bold text-white">{t('Submit Homework Solution')}</h3>
               <p className="mt-0.5 text-xs text-slate-400">{selectedHw.title} ({selectedHw.subject})</p>
 
               <form onSubmit={handleSubmitSolution} className="mt-4 space-y-3">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300">File Attachment URL / Link</label>
+                  <label className="block text-[11px] font-semibold text-slate-300">{t('File Attachment URL / Link')}</label>
                   <input
                     type="url"
                     required
@@ -641,7 +771,7 @@ export const StudentDashboard = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300">Student Comments / Notes</label>
+                  <label className="block text-[11px] font-semibold text-slate-300">{t('Student Comments / Notes')}</label>
                   <textarea
                     rows={3}
                     value={solutionText}

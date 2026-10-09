@@ -1,9 +1,11 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const timetableSchema = new mongoose.Schema({
   class: {
     type: String,
-    required: [true, 'Class name is required (e.g. 10-A)']
+    enum: ACADEMIC_CLASSES,
+    required: [true, 'Class grade is required (7, 8, 9, or 10)']
   },
   subject: {
     type: String,

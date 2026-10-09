@@ -20,8 +20,11 @@ import {
   Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ACADEMIC_CLASSES } from '../constants/academicClasses';
+import { useLanguage } from '../context/LanguageContext';
 
 export const AdminDashboard = () => {
+  const { t } = useLanguage();
   const location = useLocation();
   const path = location.pathname;
 
@@ -30,20 +33,26 @@ export const AdminDashboard = () => {
   const [fees, setFees] = useState([]);
   const [timetables, setTimetables] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [admissionEnquiries, setAdmissionEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Filter States
   const [roleFilter, setRoleFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedClass, setSelectedClass] = useState('10-A');
+  const [selectedClass, setSelectedClass] = useState('10');
 
   // Add User Modal State (Bug A4)
   const [showAddModal, setShowAddModal] = useState(false);
+  const [parentToLink, setParentToLink] = useState(null);
+  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [teacherToLink, setTeacherToLink] = useState(null);
+  const [selectedTeacherStudentId, setSelectedTeacherStudentId] = useState('');
   const [newUser, setNewUser] = useState({
     name: '',
     email: '',
     role: 'student',
-    class: '10-A',
+    class: '10',
+    assignedClasses: [],
     subject: 'Mathematics',
     password: '',
     confirmPassword: ''
@@ -52,7 +61,7 @@ export const AdminDashboard = () => {
   // Timetable Modal State (Bug F3)
   const [showTimetableModal, setShowTimetableModal] = useState(false);
   const [newSlot, setNewSlot] = useState({
-    class: '10-A',
+    class: '10',
     subject: 'Mathematics',
     teacher: '',
     day: 'Monday',
@@ -64,8 +73,7 @@ export const AdminDashboard = () => {
   // Fee Modal State
   const [showFeeModal, setShowFeeModal] = useState(false);
   const [newFee, setNewFee] = useState({
-    studentName: '',
-    class: '10-A',
+    studentId: '',
     month: 'September',
     amount: 3500,
     dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -74,18 +82,20 @@ export const AdminDashboard = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [statsRes, usersRes, feesRes, ttRes, notesRes] = await Promise.all([
+      const [statsRes, usersRes, feesRes, ttRes, notesRes, enquiriesRes] = await Promise.all([
         api.get('/admin/dashboard-stats'),
         api.get('/admin/users'),
         api.get('/fees'),
         api.get('/timetable'),
-        api.get('/notes')
+        api.get('/notes'),
+        api.get('/admission-enquiries')
       ]);
       setStats(statsRes.data?.stats || null);
       setUsers(usersRes.data?.users || []);
       setFees(feesRes.data?.fees || []);
       setTimetables(ttRes.data?.timetable || []);
       setNotes(notesRes.data?.materials || []);
+      setAdmissionEnquiries(enquiriesRes.data?.enquiries || []);
     } catch (err) {
       toast.error('Failed to load telemetry data');
     }
@@ -94,7 +104,7 @@ export const AdminDashboard = () => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [path]);
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
@@ -110,7 +120,8 @@ export const AdminDashboard = () => {
         name: newUser.name,
         email: newUser.email,
         role: newUser.role,
-        class: newUser.class,
+        class: newUser.role === 'student' ? newUser.class : '',
+        assignedClasses: newUser.role === 'teacher' ? newUser.assignedClasses : [],
         subject: newUser.subject,
         password: newUser.password
       });
@@ -122,7 +133,8 @@ export const AdminDashboard = () => {
           name: '',
           email: '',
           role: 'student',
-          class: '10-A',
+          class: '10',
+          assignedClasses: [],
           subject: 'Mathematics',
           password: '',
           confirmPassword: ''
@@ -143,6 +155,69 @@ export const AdminDashboard = () => {
       } catch (err) {
         toast.error('Error deleting user');
       }
+    }
+  };
+
+  const handleLinkStudent = async (e) => {
+    e.preventDefault();
+    if (!parentToLink || !selectedStudentId) return;
+    try {
+      await api.post(`/admin/parents/${parentToLink._id}/children`, {
+        studentId: selectedStudentId,
+        relationship: 'Parent'
+      });
+      toast.success('Student linked to parent after institute verification');
+      setParentToLink(null);
+      setSelectedStudentId('');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to link student');
+    }
+  };
+
+  const handleUnlinkStudent = async (parent, studentId) => {
+    if (!window.confirm('Remove this verified parent-child link?')) return;
+    try {
+      await api.delete(`/admin/parents/${parent._id}/children/${studentId}`);
+      toast.success('Parent-child link removed');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to remove parent-child link');
+    }
+  };
+
+  const handleLinkStudentToTeacher = async (e) => {
+    e.preventDefault();
+    if (!teacherToLink || !selectedTeacherStudentId) return;
+    try {
+      await api.post(`/admin/teachers/${teacherToLink._id}/students`, { studentId: selectedTeacherStudentId });
+      toast.success('Student linked to teacher');
+      setTeacherToLink(null);
+      setSelectedTeacherStudentId('');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to link student to teacher');
+    }
+  };
+
+  const handleUnlinkStudentFromTeacher = async (teacher, studentId) => {
+    if (!window.confirm('Remove this teacher–student link?')) return;
+    try {
+      await api.delete(`/admin/teachers/${teacher._id}/students/${studentId}`);
+      toast.success('Teacher–student link removed');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to remove teacher–student link');
+    }
+  };
+
+  const handleAdmissionStatusChange = async (enquiryId, status) => {
+    try {
+      const response = await api.put(`/admission-enquiries/${enquiryId}`, { status });
+      setAdmissionEnquiries(current => current.map(enquiry => enquiry._id === enquiryId ? response.data.enquiry : enquiry));
+      toast.success('Admission enquiry status updated');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update enquiry status');
     }
   };
 
@@ -168,6 +243,12 @@ export const AdminDashboard = () => {
       if (res.data?.success) {
         toast.success('Fee invoice issued successfully');
         setShowFeeModal(false);
+        setNewFee({
+          studentId: '',
+          month: 'September',
+          amount: 3500,
+          dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        });
         fetchData();
       }
     } catch (err) {
@@ -194,17 +275,19 @@ export const AdminDashboard = () => {
           <div>
             <h2 className="text-2xl font-black text-white">
               {path.includes('/users')
-                ? 'User Directory'
+                ? t('User Directory')
                 : path.includes('/timetable')
-                ? 'Academic Timetable'
+                ? t('Academic Timetable')
                 : path.includes('/fees')
-                ? 'Fee Invoices & Revenue'
+                ? t('Fee Invoices & Revenue')
                 : path.includes('/notes')
-                ? 'Institutional Study Notes'
-                : 'Administrator Overview'}
+                ? t('Institutional Study Notes')
+                : path.includes('/admissions')
+                ? t('Admission Enquiries')
+                : t('Administrator Overview')}
             </h2>
             <p className="text-xs text-slate-400">
-              Kashvi SmartClass Central Control & Governance Engine
+              {t('Kashvi SmartClass Central Control & Governance Engine')}
             </p>
           </div>
           <div className="flex gap-2">
@@ -214,7 +297,7 @@ export const AdminDashboard = () => {
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
               >
                 <Plus className="h-4 w-4" />
-                <span>Add Timetable Slot</span>
+                <span>{t('Add Timetable Slot')}</span>
               </button>
             )}
             {path.includes('/fees') && (
@@ -223,16 +306,16 @@ export const AdminDashboard = () => {
                 className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-500"
               >
                 <Plus className="h-4 w-4" />
-                <span>Create Fee Invoice</span>
+                <span>{t('Create Fee Invoice')}</span>
               </button>
             )}
-            <button
+            {!path.includes('/admissions') && <button
               onClick={() => setShowAddModal(true)}
               className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:bg-indigo-500"
             >
               <UserPlus className="h-4 w-4" />
-              <span>Add New User</span>
-            </button>
+              <span>{t('Add New User')}</span>
+            </button>}
           </div>
         </div>
 
@@ -243,53 +326,53 @@ export const AdminDashboard = () => {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Total Enrolled</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Total Enrolled')}</span>
                   <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-400">
                     <GraduationCap className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
                   <h3 className="text-2xl font-black text-white">{stats?.totalStudents || users.filter(u=>u.role==='student').length || 18}</h3>
-                  <p className="mt-1 text-[11px] text-emerald-400">Across 10 Academic Batches</p>
+                  <p className="mt-1 text-[11px] text-emerald-400">{t('Grades 7–10')}</p>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Faculty Members</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Faculty Members')}</span>
                   <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-400">
                     <Users className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
                   <h3 className="text-2xl font-black text-white">{stats?.totalTeachers || users.filter(u=>u.role==='teacher').length || 8}</h3>
-                  <p className="mt-1 text-[11px] text-indigo-400">Active Faculty</p>
+                  <p className="mt-1 text-[11px] text-indigo-400">{t('Active Faculty')}</p>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Total Fee Collections</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('Total Fee Collections')}</span>
                   <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-400">
                     <DollarSign className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
                   <h3 className="text-2xl font-black text-white">₹{stats?.totalCollectedFees?.toLocaleString() || '1,45,000'}</h3>
-                  <p className="mt-1 text-[11px] text-emerald-400">Verified Settlements</p>
+                  <p className="mt-1 text-[11px] text-emerald-400">{t('Verified Settlements')}</p>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">System Security</span>
+                  <span className="text-xs font-semibold text-slate-400">{t('System Security')}</span>
                   <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-400">
                     <Shield className="h-5 w-5" />
                   </div>
                 </div>
                 <div className="mt-3">
-                  <h3 className="text-2xl font-black text-emerald-400">Operational</h3>
-                  <p className="mt-1 text-[11px] text-slate-400">JWT / RBAC Active</p>
+                  <h3 className="text-2xl font-black text-emerald-400">{t('Operational')}</h3>
+                  <p className="mt-1 text-[11px] text-slate-400">{t('JWT / RBAC Active')}</p>
                 </div>
               </div>
             </div>
@@ -298,17 +381,17 @@ export const AdminDashboard = () => {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-xl lg:col-span-2">
                 <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white">Recent Registered Accounts</h3>
-                  <span className="text-xs text-indigo-400">{users.length} Total Registered</span>
+                  <h3 className="text-sm font-bold text-white">{t('Recent Registered Accounts')}</h3>
+                  <span className="text-xs text-indigo-400">{users.length} {t('Total Registered')}</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-slate-800 text-slate-400">
-                        <th className="pb-3 font-semibold">Unique ID</th>
-                        <th className="pb-3 font-semibold">Name</th>
-                        <th className="pb-3 font-semibold">Role</th>
-                        <th className="pb-3 font-semibold">Email</th>
+                        <th className="pb-3 font-semibold">{t('Unique ID')}</th>
+                        <th className="pb-3 font-semibold">{t('Name')}</th>
+                        <th className="pb-3 font-semibold">{t('Role')}</th>
+                        <th className="pb-3 font-semibold">{t('Email')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
@@ -329,17 +412,43 @@ export const AdminDashboard = () => {
                 </div>
               </div>
 
-              {/* Institution System Notice */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-xl">
-                <h3 className="mb-3 text-sm font-bold text-white">System Broadcasts</h3>
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5">
-                    <p className="text-xs font-bold text-indigo-300">Quarterly Examination Schedule</p>
-                    <p className="mt-1 text-[11px] text-slate-400">Timetable slots updated across Classes 9-A, 10-A, and 12-B.</p>
+              {/* Institution System Notice & Admissions quick preview */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-xl space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-white">Admission Enquiries</h3>
+                    <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold text-indigo-400">
+                      {admissionEnquiries.filter(e => e.status === 'new').length} New
+                    </span>
                   </div>
-                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
-                    <p className="text-xs font-bold text-emerald-300">Fee Invoices Dispatched</p>
-                    <p className="mt-1 text-[11px] text-slate-400">Instant UPI payment link active for parent settlements.</p>
+                  {admissionEnquiries.length > 0 ? (
+                    <div className="space-y-2">
+                      {admissionEnquiries.slice(0, 2).map((e) => (
+                        <div key={e._id} className="rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs">
+                          <div className="flex items-center justify-between font-bold text-white">
+                            <span>{e.name}</span>
+                            <span className="text-[10px] text-indigo-400">Class {e.desiredClass}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">{e.email}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">No new enquiries</p>
+                  )}
+                </div>
+
+                <div className="border-t border-slate-800/80 pt-3">
+                  <h3 className="mb-2 text-xs font-bold text-white">System Broadcasts</h3>
+                  <div className="space-y-2">
+                    <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-2.5">
+                      <p className="text-xs font-bold text-indigo-300">Quarterly Schedule</p>
+                      <p className="mt-0.5 text-[11px] text-slate-400">Timetable slots active for classes 7 to 10.</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+                      <p className="text-xs font-bold text-emerald-300">Fee Invoices</p>
+                      <p className="mt-0.5 text-[11px] text-slate-400">UPI payment receipts tracking enabled.</p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -406,11 +515,42 @@ export const AdminDashboard = () => {
                       </td>
                       <td className="py-3 text-slate-300">
                         {u.class || u.subject || 'Institution Wide'}
+                        {u.role === 'teacher' && (
+                          <div className="mt-1 text-[10px] text-slate-500">
+                            Linked students: {(u.linkedStudents || []).map(id => users.find(student => student._id === id)?.name).filter(Boolean).join(', ') || 'None'}
+                          </div>
+                        )}
+                        {u.role === 'student' && (
+                          <div className="mt-1 text-[10px] text-slate-500">
+                            Parents: {(u.parents || []).map(id => users.find(parent => parent._id === id)?.name).filter(Boolean).join(', ') || 'Not linked'}
+                          </div>
+                        )}
+                        {u.role === 'parent' && (
+                          <div className="mt-1 text-[10px] text-slate-500">
+                            Students: {(u.children || []).map(child => child.studentName || users.find(student => student._id === child.studentId)?.name).filter(Boolean).join(', ') || 'None'}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 font-mono font-bold text-indigo-400">
                         {u.uniqueId || 'N/A'}
                       </td>
                       <td className="py-3 text-right">
+                        {u.role === 'parent' && (
+                          <button
+                            onClick={() => setParentToLink(u)}
+                            className="mr-2 rounded-lg px-2 py-1 text-[10px] font-semibold text-indigo-300 hover:bg-indigo-500/10"
+                          >
+                            Link student
+                          </button>
+                        )}
+                        {u.role === 'teacher' && (
+                          <button
+                            onClick={() => setTeacherToLink(u)}
+                            className="mr-2 rounded-lg px-2 py-1 text-[10px] font-semibold text-indigo-300 hover:bg-indigo-500/10"
+                          >
+                            Link students
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDeleteUser(u._id)}
                           className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
@@ -440,7 +580,7 @@ export const AdminDashboard = () => {
                 onChange={(e) => setSelectedClass(e.target.value)}
                 className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
               >
-                {['10-A', '10-B', '9-A', '9-B', '8-A'].map((c) => (
+                {ACADEMIC_CLASSES.map((c) => (
                   <option key={c} value={c}>Class {c}</option>
                 ))}
               </select>
@@ -565,6 +705,65 @@ export const AdminDashboard = () => {
           </div>
         )}
 
+        {/* 6. ADMISSIONS ENQUIRIES VIEW */}
+        {path.includes('/admissions') && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-400">
+                {t('Total Enquiries')}: <strong className="text-indigo-400 font-bold">{admissionEnquiries.length}</strong>
+              </p>
+              <button
+                type="button"
+                onClick={fetchData}
+                className="rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white"
+              >
+                ↻ Refresh List
+              </button>
+            </div>
+            <div className="space-y-3">
+              {admissionEnquiries.length ? admissionEnquiries.map(enquiry => (
+                <article key={enquiry._id} className="grid gap-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-xl md:grid-cols-[1fr_auto]">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-bold text-white">{enquiry.name}</h3>
+                      <span className="rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase text-indigo-400 border border-indigo-500/20">Class {enquiry.desiredClass}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                        enquiry.status === 'enrolled' ? 'bg-emerald-500/10 text-emerald-400' :
+                        enquiry.status === 'contacted' ? 'bg-indigo-500/10 text-indigo-400' :
+                        enquiry.status === 'closed' ? 'bg-slate-700/50 text-slate-400' :
+                        'bg-amber-500/10 text-amber-400'
+                      }`}>
+                        {enquiry.status}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-300">
+                      📧 {enquiry.email} &nbsp;·&nbsp; 📞 {enquiry.phone}
+                    </p>
+                    {enquiry.message && <p className="mt-3 whitespace-pre-wrap text-xs text-slate-400 bg-slate-950/60 p-3 rounded-xl border border-slate-800/60">{enquiry.message}</p>}
+                    <time className="mt-3 block text-[10px] text-slate-500">{new Date(enquiry.createdAt).toLocaleString()}</time>
+                  </div>
+                  <div className="flex flex-col justify-center">
+                    <label className="text-xs font-semibold text-slate-400">
+                      Update Status
+                      <select
+                        value={enquiry.status}
+                        onChange={event => handleAdmissionStatusChange(enquiry._id, event.target.value)}
+                        className="mt-1 block rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                      >
+                        {['new', 'contacted', 'enrolled', 'closed'].map(status => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                </article>
+              )) : (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center backdrop-blur-xl">
+                  <p className="text-sm text-slate-400">No admission enquiries submitted yet.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ADD USER MODAL WITH PASSWORD (Bug A4) */}
         {showAddModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
@@ -611,20 +810,32 @@ export const AdminDashboard = () => {
                       <option value="admin">Admin</option>
                     </select>
                   </div>
-                  <div>
+                  {newUser.role === 'student' && <div>
                     <label className="block text-[11px] font-semibold text-slate-300">Class Batch</label>
                     <select
                       value={newUser.class}
                       onChange={(e) => setNewUser({ ...newUser, class: e.target.value })}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                     >
-                      <option value="10-A">Class 10-A</option>
-                      <option value="10-B">Class 10-B</option>
-                      <option value="9-A">Class 9-A</option>
-                      <option value="9-B">Class 9-B</option>
-                      <option value="8-A">Class 8-A</option>
+                      {ACADEMIC_CLASSES.map(grade => <option key={grade} value={grade}>Class {grade}</option>)}
                     </select>
-                  </div>
+                  </div>}
+                  {newUser.role === 'teacher' && <label className="block text-[11px] font-semibold text-slate-300">
+                    Assigned grades
+                    <select
+                      multiple
+                      required
+                      value={newUser.assignedClasses}
+                      onChange={event => setNewUser({
+                        ...newUser,
+                        assignedClasses: Array.from(event.target.selectedOptions, option => option.value)
+                      })}
+                      className="mt-1 min-h-24 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white"
+                    >
+                      {ACADEMIC_CLASSES.map(grade => <option key={grade} value={grade}>Class {grade}</option>)}
+                    </select>
+                    <span className="mt-1 block font-normal text-slate-500">Hold Ctrl to select multiple grades.</span>
+                  </label>}
                 </div>
 
                 {/* Password & Confirm Password (Bug A4) */}
@@ -673,6 +884,150 @@ export const AdminDashboard = () => {
           </div>
         )}
 
+        {parentToLink && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+              <h3 className="text-lg font-bold text-white">Verify Parent–Student Link</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Choose the student after checking the relationship with the institute.
+              </p>
+              {parentToLink.children?.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {parentToLink.children.map((child) => (
+                    <div key={child.studentId} className="flex items-center justify-between rounded-lg bg-slate-950 px-3 py-2">
+                      <span className="text-xs text-slate-200">{child.studentName || child.studentId}</span>
+                      <button
+                        onClick={() => handleUnlinkStudent(parentToLink, child.studentId)}
+                        className="text-[10px] font-semibold text-rose-400 hover:text-rose-300"
+                      >
+                        Unlink
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <form onSubmit={handleLinkStudent} className="mt-4 space-y-3">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Student
+                  <select
+                    required
+                    value={selectedStudentId}
+                    onChange={(e) => setSelectedStudentId(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  >
+                    <option value="">Select a student</option>
+                    {users.filter((user) => user.role === 'student' &&
+                      !parentToLink.children?.some((child) => child.studentId === user._id))
+                      .map((student) => (
+                        <option key={student._id} value={student._id}>
+                          {student.name} · {student.uniqueId} · Class {student.class}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setParentToLink(null); setSelectedStudentId(''); }}
+                    className="flex-1 rounded-xl border border-slate-800 bg-slate-800/60 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white hover:bg-indigo-500"
+                  >
+                    Verify & Link
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {teacherToLink && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+              <h3 className="text-lg font-bold text-white">Link Teacher to Students</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                {teacherToLink.name} can manage linked student records and contact their parents.
+                Assigned grades continue to control class-wide teaching.
+              </p>
+              {teacherToLink.linkedStudents?.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {teacherToLink.linkedStudents.map(studentId => {
+                    const student = users.find(user => user._id === studentId);
+                    return (
+                      <div key={studentId} className="flex items-center justify-between rounded-lg bg-slate-950 px-3 py-2">
+                        <span className="text-xs text-slate-200">{student?.name || studentId}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUnlinkStudentFromTeacher(teacherToLink, studentId)}
+                          className="text-[10px] font-semibold text-rose-400 hover:text-rose-300"
+                        >
+                          Unlink
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <form onSubmit={handleLinkStudentToTeacher} className="mt-4 space-y-3">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Student
+                  <select
+                    required
+                    value={selectedTeacherStudentId}
+                    onChange={event => setSelectedTeacherStudentId(event.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  >
+                    <option value="">Select a student</option>
+                    {users.filter(user =>
+                      user.role === 'student' &&
+                      teacherToLink.assignedClasses?.includes(user.class) &&
+                      !teacherToLink.linkedStudents?.includes(user._id)
+                    ).map(student => (
+                      <option key={student._id} value={student._id}>
+                        {student.name} · {student.uniqueId} · Class {student.class}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setTeacherToLink(null); setSelectedTeacherStudentId(''); }}
+                    className="flex-1 rounded-xl border border-slate-800 bg-slate-800/60 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!users.some(user =>
+                      user.role === 'student' &&
+                      teacherToLink.assignedClasses?.includes(user.class) &&
+                      !teacherToLink.linkedStudents?.includes(user._id)
+                    )}
+                    className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Link Student
+                  </button>
+                </div>
+              </form>
+              {!users.some(user =>
+                user.role === 'student' &&
+                teacherToLink.assignedClasses?.includes(user.class) &&
+                !teacherToLink.linkedStudents?.includes(user._id)
+              ) && (
+                <p className="mt-3 text-xs text-amber-300">
+                  No unlinked students are in this teacher’s assigned grades. Update the teacher’s assigned grades or create a student in one of those grades first.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* TIMETABLE CONFLICT CHECK MODAL (Bug F3) */}
         {showTimetableModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
@@ -689,7 +1044,7 @@ export const AdminDashboard = () => {
                       onChange={(e) => setNewSlot({ ...newSlot, class: e.target.value })}
                       className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                     >
-                      {['10-A', '10-B', '9-A', '9-B', '8-A'].map(c => <option key={c} value={c}>{c}</option>)}
+                      {ACADEMIC_CLASSES.map(grade => <option key={grade} value={grade}>{grade}</option>)}
                     </select>
                   </div>
                   <div>
@@ -780,28 +1135,29 @@ export const AdminDashboard = () => {
               <p className="mt-0.5 text-xs text-slate-400">Issue fee record for student tuition</p>
 
               <form onSubmit={handleCreateFeeInvoice} className="mt-4 space-y-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300">Student Name</label>
-                  <input
-                    type="text"
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  Student
+                  <select
                     required
-                    value={newFee.studentName}
-                    onChange={(e) => setNewFee({ ...newFee, studentName: e.target.value })}
+                    value={newFee.studentId}
+                    onChange={(e) => setNewFee({ ...newFee, studentId: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                    placeholder="e.g. Aarav Sharma"
-                  />
-                </div>
+                  >
+                    <option value="">Select a student</option>
+                    {users.filter((user) => user.role === 'student').map((student) => (
+                      <option key={student._id} value={student._id}>
+                        {student.name} · {student.uniqueId} · Class {student.class}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300">Class</label>
-                    <select
-                      value={newFee.class}
-                      onChange={(e) => setNewFee({ ...newFee, class: e.target.value })}
-                      className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                    >
-                      {['10-A', '10-B', '9-A', '9-B', '8-A'].map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <p className="text-[11px] font-semibold text-slate-300">Class</p>
+                    <p className="mt-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-400">
+                      {users.find((user) => user._id === newFee.studentId)?.class || 'Selected student class'}
+                    </p>
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300">Billing Month</label>
@@ -823,6 +1179,19 @@ export const AdminDashboard = () => {
                     required
                     value={newFee.amount}
                     onChange={(e) => setNewFee({ ...newFee, amount: Number(e.target.value) })}
+                    className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    min="0.01"
+                    step="0.01"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300">Due Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={newFee.dueDate}
+                    onChange={(e) => setNewFee({ ...newFee, dueDate: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
                   />
                 </div>

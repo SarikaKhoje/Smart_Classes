@@ -32,9 +32,9 @@ function assert(description, condition) {
 console.log('--- 1. Fee Management Authorization ---');
 
 const mockAdminUser = { _id: 'admin_1', role: 'admin' };
-const mockTeacherUser = { _id: 'teacher_1', role: 'teacher', assignedClasses: ['10-A'] };
-const mockStudentUserA = { _id: 'student_1', role: 'student', class: '10-A' };
-const mockStudentUserB = { _id: 'student_2', role: 'student', class: '10-B' };
+const mockTeacherUser = { _id: 'teacher_1', role: 'teacher', assignedClasses: ['10'] };
+const mockStudentUserA = { _id: 'student_1', role: 'student', class: '10' };
+const mockStudentUserB = { _id: 'student_2', role: 'student', class: '9' };
 const mockParentUser = {
   _id: 'parent_1',
   role: 'parent',
@@ -127,7 +127,7 @@ const aiContent = fs.readFileSync(aiControllerPath, 'utf8');
 
 assert('5.1 AI Study Plan endpoint validates input hours (400 for negative/excessive hours)', aiContent.includes('studyHoursDaily <= 0 || studyHoursDaily > 24'));
 assert('5.2 AI Study Plan validates student authorization & blocks other student data (403)', aiContent.includes('targetStudentId.toString() !== req.user._id.toString()'));
-assert('5.3 AI Study Plan safely handles unconfigured API key with clear transparent status', aiContent.includes('aiConfigured: false'));
+assert('5.3 AI Study Plan exposes whether an external AI provider is configured', aiContent.includes('aiConfigured: Boolean(apiKey)'));
 
 // ----------------------------------------------------
 // 6. 🔔 WhatsApp Integration
@@ -144,7 +144,7 @@ assert('6.1 WhatsApp reports unconfigured when credentials missing (no fake succ
 console.log('\n--- 7. Homework Duplicate Submission Protection ---');
 const mockHomework = {
   _id: 'hw_math_01',
-  class: '10-A',
+  class: '10',
   submissions: []
 };
 

@@ -1,8 +1,9 @@
-import transporter from '../config/email.js';
+import createEmailTransport from '../config/email.js';
 
 export const sendOtpEmail = async (email, otp) => {
+  const transporter = createEmailTransport();
   const mailOptions = {
-    from: `"Kashvi SmartClass" <${process.env.EMAIL_USER || 'no-reply@kashvi.com'}>`,
+    from: `"Kashvi SmartClass" <${process.env.EMAIL_USER}>`,
     to: email,
     subject: 'Kashvi SmartClass - Password Reset OTP',
     html: `
@@ -20,16 +21,5 @@ export const sendOtpEmail = async (email, otp) => {
     `,
   };
 
-  try {
-    if (process.env.EMAIL_USER && process.env.EMAIL_PASS && process.env.EMAIL_USER !== 'your_email@gmail.com') {
-      await transporter.sendMail(mailOptions);
-    } else {
-      console.log(`📨 [SIMULATED EMAIL] To: ${email} | OTP: ${otp}`);
-    }
-    return true;
-  } catch (error) {
-    console.warn(`Email sending failed (simulated fallback): ${error.message}`);
-    console.log(`📨 [FALLBACK OTP]: ${otp} for ${email}`);
-    return true;
-  }
+  await transporter.sendMail(mailOptions);
 };

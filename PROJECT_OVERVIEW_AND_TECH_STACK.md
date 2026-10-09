@@ -184,6 +184,6 @@ npm run dev:frontend
 | Role | Email | Password | Access Scope |
 | :--- | :--- | :--- | :--- |
 | **Admin** | `admin@kashvi.com` | `Admin@2024` | Complete institutional governance, timetables & users |
-| **Teacher** | `teacher@kashvi.com` | `Teacher@123` | Class 10-A attendance, homework hub & live classes |
-| **Student** | `student@kashvi.com` | `Student@123` | Class 10-A student portal, homework submission & AI planner |
+| **Teacher** | `teacher@kashvi.com` | `Teacher@123` | Class 10 attendance, homework hub & live classes |
+| **Student** | `student@kashvi.com` | `Student@123` | Class 10 student portal, homework submission & AI planner |
 | **Parent** | `parent@kashvi.com` | `Parent@123` | Multi-ward attendance, fee QR payments & report cards |

@@ -3,11 +3,15 @@ import {
   getChildren,
   getChildAttendance,
   getChildFees,
-  payFee,
-  getChildReports
+  getChildReports,
+  getChildTests,
+  getChildHomework,
+  getChildTimetable,
+  getChildAnnouncements
 } from '../controllers/parentController.js';
 import { protect } from '../middleware/auth.js';
 import { authorize } from '../middleware/roleCheck.js';
+import { getChildCheckIns } from '../controllers/checkInController.js';
 
 const router = express.Router();
 
@@ -18,6 +22,9 @@ router.get('/children', getChildren);
 router.get('/children/:id/attendance', getChildAttendance);
 router.get('/children/:id/fees', getChildFees);
 router.get('/children/:id/reports', getChildReports);
-router.post('/fees/pay', payFee);
-
+router.get('/children/:id/tests', getChildTests);
+router.get('/children/:id/homework', getChildHomework);
+router.get('/children/:id/timetable', getChildTimetable);
+router.get('/children/:id/announcements', getChildAnnouncements);
+router.get('/children/:id/check-ins', getChildCheckIns);
 export default router;

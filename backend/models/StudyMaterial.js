@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const studyMaterialSchema = new mongoose.Schema({
   title: {
@@ -16,6 +17,7 @@ const studyMaterialSchema = new mongoose.Schema({
   },
   class: {
     type: String,
+    enum: ACADEMIC_CLASSES,
     required: [true, 'Please specify target class']
   },
   section: {
@@ -39,6 +41,10 @@ const studyMaterialSchema = new mongoose.Schema({
   fileUrl: {
     type: String,
     required: [true, 'File URL is required']
+  },
+  storageName: {
+    type: String,
+    default: ''
   },
   fileName: {
     type: String,

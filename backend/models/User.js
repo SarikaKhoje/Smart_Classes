@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { ACADEMIC_CLASSES } from '../utils/academicClass.js';
 
 const userSchema = new mongoose.Schema({
   uniqueId: {
@@ -33,8 +34,16 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
-  assignedClasses: [{
-    type: String
+  assignedClasses: {
+    type: [String],
+    validate: {
+      validator: classes => classes.every(className => ACADEMIC_CLASSES.includes(className)),
+      message: `Assigned classes must be one of: ${ACADEMIC_CLASSES.join(', ')}`
+    }
+  },
+  linkedStudents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }],
   // Student specific fields
   rollNumber: {
@@ -43,6 +52,7 @@ const userSchema = new mongoose.Schema({
   },
   class: {
     type: String,
+    enum: ['', ...ACADEMIC_CLASSES],
     default: ''
   },
   dateOfBirth: {
@@ -52,6 +62,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  parents: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
   // Parent specific fields
   children: [{
     studentId: {
@@ -97,7 +111,17 @@ const userSchema = new mongoose.Schema({
     default: false
   },
   twoFactorSecret: {
-    type: String,
+    type: String
+  },
+  twoFactorPendingSecret: {
+    type: String
+  },
+  twoFactorPendingExpires: {
+    type: Date
+  },
+  twoFactorLastVerifiedStep: {
+    type: Number,
+    default: -1,
     default: ''
   },
   // Subscription & Free Trial

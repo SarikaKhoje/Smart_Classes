@@ -9,7 +9,8 @@ import {
   deleteHomework,
   createTest,
   getTests,
-  updateTest
+  updateTest,
+  recordStudentTestMarks
 } from '../controllers/teacherController.js';
 import { protect } from '../middleware/auth.js';
 import { authorize } from '../middleware/roleCheck.js';
@@ -34,5 +35,6 @@ router.delete('/homework/:id', deleteHomework);
 router.post('/tests', createTest);
 router.get('/tests', getTests);
 router.put('/tests/:id', updateTest);
+router.post('/tests/:id/marks', recordStudentTestMarks);
 
 export default router;
