@@ -72,8 +72,13 @@ app.use('/api', apiRoutes);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 
-app.listen(PORT, HOST, () => {
-  console.log(`🚀 Kashvi SmartClass Server running in ${process.env.NODE_ENV || 'development'} mode at http://${HOST}:${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, HOST, () => {
+    console.log(`🚀 Kashvi SmartClass Server running in ${process.env.NODE_ENV || 'development'} mode at http://${HOST}:${PORT}`);
+  });
+}
+
+export default app;
+
